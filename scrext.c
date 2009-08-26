@@ -35,16 +35,16 @@ typedef struct _SCREXT {                 // type of structure of the script exte
   TCULOG *ulog;                          // update log object
   uint32_t sid;                          // server ID
   TCMDB *stash;                          // global stash object
-  pthread_mutex_t *lcks;                 // mutex for user locks
-  int lcknum;                            // number of user locks
+  TCMDB *lock;                           // global lock object
   void (*logger)(int, const char *, void *);  // logging function
   void *logopq;                          // opaque pointer for the logging function
+  bool term;                             // terminate flag
 } SCREXT;
 
 
 /* Initialize the global scripting language extension. */
-void *scrextnew(void **screxts, int thnum, int thid, const char *path, TCADB *adb, TCULOG *ulog,
-                uint32_t sid, TCMDB *stash, pthread_mutex_t *lcks, int lcknum,
+void *scrextnew(void **screxts, int thnum, int thid, const char *path,
+                TCADB *adb, TCULOG *ulog, uint32_t sid, TCMDB *stash, TCMDB *lock,
                 void (*logger)(int, const char *, void *), void *logopq){
   SCREXT *scr = tcmalloc(sizeof(*scr));
   scr->screxts = (SCREXT **)screxts;
@@ -55,10 +55,10 @@ void *scrextnew(void **screxts, int thnum, int thid, const char *path, TCADB *ad
   scr->ulog = ulog;
   scr->sid = sid;
   scr->stash = stash;
-  scr->lcks = lcks;
-  scr->lcknum = lcknum;
+  scr->lock = lock;
   scr->logger = logger;
   scr->logopq = logopq;
+  scr->term = false;
   return scr;
 }
 
@@ -77,25 +77,25 @@ char *scrextcallmethod(void *scr, const char *name,
                        const void *kbuf, int ksiz, const void *vbuf, int vsiz, int *sp){
   SCREXT *myscr = scr;
   if(!strcmp(name, "put")){
-    if(!tculogadbput(myscr->ulog, myscr->sid, myscr->adb, kbuf, ksiz, vbuf, vsiz))
+    if(!tculogadbput(myscr->ulog, myscr->sid, 0, myscr->adb, kbuf, ksiz, vbuf, vsiz))
       return NULL;
     char *msg = tcstrdup("ok");
     *sp = strlen(msg);
     return msg;
   } else if(!strcmp(name, "putkeep")){
-    if(!tculogadbputkeep(myscr->ulog, myscr->sid, myscr->adb, kbuf, ksiz, vbuf, vsiz))
+    if(!tculogadbputkeep(myscr->ulog, myscr->sid, 0, myscr->adb, kbuf, ksiz, vbuf, vsiz))
       return NULL;
     char *msg = tcstrdup("ok");
     *sp = strlen(msg);
     return msg;
   } else if(!strcmp(name, "putcat")){
-    if(!tculogadbputcat(myscr->ulog, myscr->sid, myscr->adb, kbuf, ksiz, vbuf, vsiz))
+    if(!tculogadbputcat(myscr->ulog, myscr->sid, 0, myscr->adb, kbuf, ksiz, vbuf, vsiz))
       return NULL;
     char *msg = tcstrdup("ok");
     *sp = strlen(msg);
     return msg;
   } else if(!strcmp(name, "out")){
-    if(!tculogadbout(myscr->ulog, myscr->sid, myscr->adb, kbuf, ksiz)) return NULL;
+    if(!tculogadbout(myscr->ulog, myscr->sid, 0, myscr->adb, kbuf, ksiz)) return NULL;
     char *msg = tcstrdup("ok");
     *sp = strlen(msg);
     return msg;
@@ -126,6 +126,14 @@ char *scrextcallmethod(void *scr, const char *name,
   wp += vsiz;
   *sp = wp - msg;
   return msg;
+}
+
+
+/* Send the terminate signal to the scripting language extension */
+bool scrextkill(void *scr){
+  SCREXT *myscr = scr;
+  myscr->term = true;
+  return true;
 }
 
 
@@ -165,16 +173,17 @@ typedef struct {                         // type of structure of the server data
   TCULOG *ulog;                          // update log object
   uint32_t sid;                          // server ID
   TCMDB *stash;                          // global stash object
+  TCMDB *lock;                           // global lock object
   pthread_mutex_t *lcks;                 // mutex for user locks
   int lcknum;                            // number of user locks
   void (*logger)(int, const char *, void *);  // logging function
   void *logopq;                          // opaque pointer for the logging function
+  bool term;                             // terminate flag
 } SERV;
 
 
 /* private function prototypes */
 static void reporterror(lua_State *lua);
-static int lockmtxidx(const char *kbuf, int ksiz, int lcknum);
 static bool iterrec(const void *kbuf, int ksiz, const void *vbuf, int vsiz, lua_State *lua);
 static int serv_eval(lua_State *lua);
 static int serv_log(lua_State *lua);
@@ -186,6 +195,7 @@ static int serv_get(lua_State *lua);
 static int serv_vsiz(lua_State *lua);
 static int serv_iterinit(lua_State *lua);
 static int serv_iternext(lua_State *lua);
+static int serv_fwmkeys(lua_State *lua);
 static int serv_addint(lua_State *lua);
 static int serv_adddouble(lua_State *lua);
 static int serv_vanish(lua_State *lua);
@@ -206,8 +216,11 @@ static int serv_lock(lua_State *lua);
 static int serv_unlock(lua_State *lua);
 static int serv_pack(lua_State *lua);
 static int serv_unpack(lua_State *lua);
+static int serv_split(lua_State *lua);
 static int serv_codec(lua_State *lua);
 static int serv_hash(lua_State *lua);
+static int serv_bit(lua_State *lua);
+static int serv_regex(lua_State *lua);
 static int serv_ucs(lua_State *lua);
 static int serv_dist(lua_State *lua);
 static int serv_isect(lua_State *lua);
@@ -221,8 +234,8 @@ static int serv_mkdir(lua_State *lua);
 
 
 /* Initialize the global scripting language extension. */
-void *scrextnew(void **screxts, int thnum, int thid, const char *path, TCADB *adb, TCULOG *ulog,
-                uint32_t sid, TCMDB *stash, pthread_mutex_t *lcks, int lcknum,
+void *scrextnew(void **screxts, int thnum, int thid, const char *path,
+                TCADB *adb, TCULOG *ulog, uint32_t sid, TCMDB *stash, TCMDB *lock,
                 void (*logger)(int, const char *, void *), void *logopq){
   char *ibuf;
   int isiz;
@@ -251,10 +264,10 @@ void *scrextnew(void **screxts, int thnum, int thid, const char *path, TCADB *ad
   serv->ulog = ulog;
   serv->sid = sid;
   serv->stash = stash;
-  serv->lcks = lcks;
-  serv->lcknum = lcknum;
+  serv->lock = lock;
   serv->logger = logger;
   serv->logopq = logopq;
+  serv->term = false;
   lua_setglobal(lua, SERVVAR);
   lua_register(lua, "_eval", serv_eval);
   lua_register(lua, "_log", serv_log);
@@ -266,6 +279,7 @@ void *scrextnew(void **screxts, int thnum, int thid, const char *path, TCADB *ad
   lua_register(lua, "_vsiz", serv_vsiz);
   lua_register(lua, "_iterinit", serv_iterinit);
   lua_register(lua, "_iternext", serv_iternext);
+  lua_register(lua, "_fwmkeys", serv_fwmkeys);
   lua_register(lua, "_addint", serv_addint);
   lua_register(lua, "_adddouble", serv_adddouble);
   lua_register(lua, "_vanish", serv_vanish);
@@ -285,8 +299,11 @@ void *scrextnew(void **screxts, int thnum, int thid, const char *path, TCADB *ad
   lua_register(lua, "_unlock", serv_unlock);
   lua_register(lua, "_pack", serv_pack);
   lua_register(lua, "_unpack", serv_unpack);
+  lua_register(lua, "_split", serv_split);
   lua_register(lua, "_codec", serv_codec);
   lua_register(lua, "_hash", serv_hash);
+  lua_register(lua, "_bit", serv_bit);
+  lua_register(lua, "_regex", serv_regex);
   lua_register(lua, "_ucs", serv_ucs);
   lua_register(lua, "_dist", serv_dist);
   lua_register(lua, "_isect", serv_isect);
@@ -399,6 +416,17 @@ char *scrextcallmethod(void *scr, const char *name,
 }
 
 
+/* Send the terminate signal to the scripting language extension */
+bool scrextkill(void *scr){
+  SCREXT *myscr = scr;
+  lua_State *lua = myscr->lua;
+  lua_getglobal(lua, SERVVAR);
+  SERV *serv = lua_touserdata(lua, -1);
+  serv->term = true;
+  return true;
+}
+
+
 /* report an error of Lua program */
 static void reporterror(lua_State *lua){
   int argc = lua_gettop(lua);
@@ -407,16 +435,6 @@ static void reporterror(lua_State *lua){
   SERV *serv = lua_touserdata(lua, -1);
   serv->logger(TTLOGERROR, msg, serv->logopq);
   tcfree(msg);
-}
-
-
-/* get the mutex index of a record */
-static int lockmtxidx(const char *kbuf, int ksiz, int lcknum){
-  uint32_t hash = 2436067;
-  while(ksiz--){
-    hash = hash * 29 + *(uint8_t *)kbuf++;
-  }
-  return hash % lcknum;
 }
 
 
@@ -532,7 +550,7 @@ static int serv_put(lua_State *lua){
   }
   lua_getglobal(lua, SERVVAR);
   SERV *serv = lua_touserdata(lua, -1);
-  bool rv = tculogadbput(serv->ulog, serv->sid, serv->adb, kbuf, ksiz, vbuf, vsiz);
+  bool rv = tculogadbput(serv->ulog, serv->sid, 0, serv->adb, kbuf, ksiz, vbuf, vsiz);
   lua_settop(lua, 0);
   lua_pushboolean(lua, rv);
   return 1;
@@ -556,7 +574,7 @@ static int serv_putkeep(lua_State *lua){
   }
   lua_getglobal(lua, SERVVAR);
   SERV *serv = lua_touserdata(lua, -1);
-  bool rv = tculogadbputkeep(serv->ulog, serv->sid, serv->adb, kbuf, ksiz, vbuf, vsiz);
+  bool rv = tculogadbputkeep(serv->ulog, serv->sid, 0, serv->adb, kbuf, ksiz, vbuf, vsiz);
   lua_settop(lua, 0);
   lua_pushboolean(lua, rv);
   return 1;
@@ -580,7 +598,7 @@ static int serv_putcat(lua_State *lua){
   }
   lua_getglobal(lua, SERVVAR);
   SERV *serv = lua_touserdata(lua, -1);
-  bool rv = tculogadbputcat(serv->ulog, serv->sid, serv->adb, kbuf, ksiz, vbuf, vsiz);
+  bool rv = tculogadbputcat(serv->ulog, serv->sid, 0, serv->adb, kbuf, ksiz, vbuf, vsiz);
   lua_settop(lua, 0);
   lua_pushboolean(lua, rv);
   return 1;
@@ -602,7 +620,7 @@ static int serv_out(lua_State *lua){
   }
   lua_getglobal(lua, SERVVAR);
   SERV *serv = lua_touserdata(lua, -1);
-  bool rv = tculogadbout(serv->ulog, serv->sid, serv->adb, kbuf, ksiz);
+  bool rv = tculogadbout(serv->ulog, serv->sid, 0, serv->adb, kbuf, ksiz);
   lua_settop(lua, 0);
   lua_pushboolean(lua, rv);
   return 1;
@@ -697,6 +715,37 @@ static int serv_iternext(lua_State *lua){
 }
 
 
+/* for _fwmkeys function */
+static int serv_fwmkeys(lua_State *lua){
+  int argc = lua_gettop(lua);
+  if(argc < 1){
+    lua_pushstring(lua, "_fwmkeys: invalid arguments");
+    lua_error(lua);
+  }
+  size_t psiz;
+  const char *pbuf = lua_tolstring(lua, 1, &psiz);
+  if(!pbuf){
+    lua_pushstring(lua, "_fwmkeys: invalid arguments");
+    lua_error(lua);
+  }
+  int max = argc > 1 && lua_isnumber(lua, 2) ? lua_tonumber(lua, 2) : -1;
+  lua_getglobal(lua, SERVVAR);
+  SERV *serv = lua_touserdata(lua, -1);
+  TCLIST *keys = tcadbfwmkeys(serv->adb, pbuf, psiz, max);
+  lua_settop(lua, 0);
+  int knum = tclistnum(keys);
+  lua_createtable(lua, knum, 0);
+  for(int i = 0; i < knum; i++){
+    int ksiz;
+    const char *kbuf = tclistval(keys, i, &ksiz);
+    lua_pushlstring(lua, kbuf, ksiz);
+    lua_rawseti(lua, 1, i + 1);
+  }
+  tclistdel(keys);
+  return 1;
+}
+
+
 /* for _addint function */
 static int serv_addint(lua_State *lua){
   int argc = lua_gettop(lua);
@@ -713,7 +762,7 @@ static int serv_addint(lua_State *lua){
   }
   lua_getglobal(lua, SERVVAR);
   SERV *serv = lua_touserdata(lua, -1);
-  int rv = tculogadbaddint(serv->ulog, serv->sid, serv->adb, kbuf, ksiz, num);
+  int rv = tculogadbaddint(serv->ulog, serv->sid, 0, serv->adb, kbuf, ksiz, num);
   lua_settop(lua, 0);
   if(rv == INT_MIN){
     lua_pushnil(lua);
@@ -740,7 +789,7 @@ static int serv_adddouble(lua_State *lua){
   }
   lua_getglobal(lua, SERVVAR);
   SERV *serv = lua_touserdata(lua, -1);
-  double rv = tculogadbadddouble(serv->ulog, serv->sid, serv->adb, kbuf, ksiz, num);
+  double rv = tculogadbadddouble(serv->ulog, serv->sid, 0, serv->adb, kbuf, ksiz, num);
   lua_settop(lua, 0);
   if(isnan(rv)){
     lua_pushnil(lua);
@@ -760,7 +809,7 @@ static int serv_vanish(lua_State *lua){
   }
   lua_getglobal(lua, SERVVAR);
   SERV *serv = lua_touserdata(lua, -1);
-  bool rv = tculogadbvanish(serv->ulog, serv->sid, serv->adb);
+  bool rv = tculogadbvanish(serv->ulog, serv->sid, 0, serv->adb);
   lua_settop(lua, 0);
   lua_pushboolean(lua, rv);
   return 1;
@@ -845,7 +894,7 @@ static int serv_misc(lua_State *lua){
   }
   lua_getglobal(lua, SERVVAR);
   SERV *serv = lua_touserdata(lua, -1);
-  TCLIST *res = ulog ? tculogadbmisc(serv->ulog, serv->sid, serv->adb, name, args) :
+  TCLIST *res = ulog ? tculogadbmisc(serv->ulog, serv->sid, 0, serv->adb, name, args) :
     tcadbmisc(serv->adb, name, args);
   lua_settop(lua, 0);
   if(res){
@@ -1200,8 +1249,14 @@ static int serv_lock(lua_State *lua){
   }
   lua_getglobal(lua, SERVVAR);
   SERV *serv = lua_touserdata(lua, -1);
-  int idx = lockmtxidx(kbuf, ksiz, serv->lcknum);
-  bool rv = pthread_mutex_lock(serv->lcks + idx) == 0;
+  bool rv = true;
+  while(!tcmdbputkeep(serv->lock, kbuf, ksiz, "", 0)){
+    tcsleep(0.1);
+    if(serv->term){
+      rv = false;
+      break;
+    }
+  }
   lua_settop(lua, 0);
   lua_pushboolean(lua, rv);
   return 1;
@@ -1223,8 +1278,7 @@ static int serv_unlock(lua_State *lua){
   }
   lua_getglobal(lua, SERVVAR);
   SERV *serv = lua_touserdata(lua, -1);
-  int idx = lockmtxidx(kbuf, ksiz, serv->lcknum);
-  bool rv = pthread_mutex_unlock(serv->lcks + idx) == 0;
+  bool rv = tcmdbout(serv->lock, kbuf, ksiz);
   lua_settop(lua, 0);
   lua_pushboolean(lua, rv);
   return 1;
@@ -1279,9 +1333,13 @@ static int serv_pack(lua_State *lua){
       loop = INT_MAX;
       format++;
     } else if(format[1] >= '0' && format[1] <= '9'){
-      char *suffix;
-      loop = strtol(format + 1, &suffix, 10);
-      format = suffix - 1;
+      format++;
+      loop = 0;
+      while(*format >= '0' && *format <= '9'){
+        loop = loop * 10 + *format - '0';
+        format++;
+      }
+      format--;
     }
     loop = tclmin(loop, emax);
     int end = tclmin(eidx + loop - 1, emax);
@@ -1445,9 +1503,13 @@ static int serv_unpack(lua_State *lua){
       loop = INT_MAX;
       format++;
     } else if(format[1] >= '0' && format[1] <= '9'){
-      char *suffix;
-      loop = strtol(format + 1, &suffix, 10);
-      format = suffix - 1;
+      format++;
+      loop = 0;
+      while(*format >= '0' && *format <= '9'){
+        loop = loop * 10 + *format - '0';
+        format++;
+      }
+      format--;
     }
     loop = tclmin(loop, size);
     for(int i = 0; i < loop && size > 0; i++){
@@ -1630,6 +1692,57 @@ static int serv_unpack(lua_State *lua){
 }
 
 
+/* for _split function */
+static int serv_split(lua_State *lua){
+  int argc = lua_gettop(lua);
+  if(argc < 1){
+    lua_pushstring(lua, "_split: invalid arguments");
+    lua_error(lua);
+  }
+  size_t isiz;
+  const char *ibuf = lua_tolstring(lua, 1, &isiz);
+  if(!ibuf){
+    lua_pushstring(lua, "_split: invalid arguments");
+    lua_error(lua);
+  }
+  const char *delims = argc > 1 ? lua_tostring(lua, 2) : NULL;
+  lua_newtable(lua);
+  int lnum = 1;
+  if(delims){
+    const char *str = ibuf;
+    while(true){
+      const char *sp = str;
+      while(*str != '\0' && !strchr(delims, *str)){
+        str++;
+      }
+      lua_pushlstring(lua, sp, str - sp);
+      lua_rawseti(lua, -2, lnum++);
+      if(*str == '\0') break;
+      str++;
+    }
+  } else {
+    const char *ptr = ibuf;
+    int size = isiz;
+    while(size >= 0){
+      const char *rp = ptr;
+      const char *ep = ptr + size;
+      while(rp < ep){
+        if(*rp == '\0') break;
+        rp++;
+      }
+      lua_pushlstring(lua, ptr, rp - ptr);
+      lua_rawseti(lua, -2, lnum++);
+      rp++;
+      size -= rp - ptr;
+      ptr = rp;
+    }
+  }
+  lua_replace(lua, 1);
+  lua_settop(lua, 1);
+  return 1;
+}
+
+
 /* for _codec function */
 static int serv_codec(lua_State *lua){
   int argc = lua_gettop(lua);
@@ -1743,6 +1856,73 @@ static int serv_hash(lua_State *lua){
   } else {
     lua_settop(lua, 0);
     lua_pushnil(lua);
+  }
+  return 1;
+}
+
+
+/* for _bit function */
+static int serv_bit(lua_State *lua){
+  int argc = lua_gettop(lua);
+  if(argc < 2){
+    lua_pushstring(lua, "_bit: invalid arguments");
+    lua_error(lua);
+  }
+  const char *mode = lua_tostring(lua, 1);
+  uint32_t num = lua_tonumber(lua, 2);
+  uint32_t aux = argc > 2 ? lua_tonumber(lua, 3) : 0;
+  if(!mode){
+    lua_pushstring(lua, "_bit: invalid arguments");
+    lua_error(lua);
+  } else if(!tcstricmp(mode, "and")){
+    num &= aux;
+  } else if(!tcstricmp(mode, "or")){
+    num |= aux;
+  } else if(!tcstricmp(mode, "xor")){
+    num ^= aux;
+  } else if(!tcstricmp(mode, "not")){
+    num = ~num;
+  } else if(!tcstricmp(mode, "left")){
+    num <<= aux;
+  } else if(!tcstricmp(mode, "right")){
+    num >>= aux;
+  } else {
+    lua_pushstring(lua, "_bit: invalid arguments");
+    lua_error(lua);
+  }
+  lua_settop(lua, 0);
+  lua_pushnumber(lua, num);
+  return 1;
+}
+
+
+/* for _regex function */
+static int serv_regex(lua_State *lua){
+  int argc = lua_gettop(lua);
+  if(argc < 2){
+    lua_pushstring(lua, "_regex: invalid arguments");
+    lua_error(lua);
+  }
+  const char *str = lua_tostring(lua, 1);
+  const char *regex = lua_tostring(lua, 2);
+  if(!str || !regex){
+    lua_pushstring(lua, "_regex: invalid arguments");
+    lua_error(lua);
+  }
+  const char *alt = argc > 2 ? lua_tostring(lua, 3) : NULL;
+  if(alt){
+    char *res = tcregexreplace(str, regex, alt);
+    lua_settop(lua, 0);
+    lua_pushstring(lua, res);
+    tcfree(res);
+  } else {
+    if(tcregexmatch(str, regex)){
+      lua_settop(lua, 0);
+      lua_pushboolean(lua, true);
+    } else {
+      lua_settop(lua, 0);
+      lua_pushboolean(lua, false);
+    }
   }
   return 1;
 }
@@ -2007,9 +2187,9 @@ static int serv_sleep(lua_State *lua){
     lua_pushstring(lua, "_sleep: invalid arguments");
     lua_error(lua);
   }
-  usleep(sec * 1000000);
   lua_settop(lua, 0);
-  return 0;
+  lua_pushboolean(lua, tcsleep(sec));
+  return 1;
 }
 
 

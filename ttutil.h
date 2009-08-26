@@ -135,7 +135,7 @@ void ttsockdel(TTSOCK *sock);
 
 /* Set the lifetime of a socket object.
    `sock' specifies the socket object.
-   `lifetime' specifies the lifetime seconds of each task.  By default, there is limit. */
+   `lifetime' specifies the lifetime seconds of each task.  By default, there is no limit. */
 void ttsocksetlife(TTSOCK *sock, double lifetime);
 
 
@@ -256,6 +256,7 @@ double ttunpackdouble(const char *buf);
  *************************************************************************************************/
 
 
+#define TTDEFPORT      1978              /* default port of the server */
 #define TTMAGICNUM     0xc8              /* magic number of each command */
 #define TTCMDPUT       0x10              /* ID of put command */
 #define TTCMDPUTKEEP   0x11              /* ID of putkeep command */
@@ -273,9 +274,10 @@ double ttunpackdouble(const char *buf);
 #define TTCMDADDDOUBLE 0x61              /* ID of adddouble command */
 #define TTCMDEXT       0x68              /* ID of ext command */
 #define TTCMDSYNC      0x70              /* ID of sync command */
-#define TTCMDVANISH    0x71              /* ID of vanish command */
-#define TTCMDCOPY      0x72              /* ID of copy command */
-#define TTCMDRESTORE   0x73              /* ID of restore command */
+#define TTCMDOPTIMIZE  0x71              /* ID of optimize command */
+#define TTCMDVANISH    0x72              /* ID of vanish command */
+#define TTCMDCOPY      0x73              /* ID of copy command */
+#define TTCMDRESTORE   0x74              /* ID of restore command */
 #define TTCMDSETMST    0x78              /* ID of setmst command */
 #define TTCMDRNUM      0x80              /* ID of rnum command */
 #define TTCMDSIZE      0x81              /* ID of size command */
@@ -320,8 +322,10 @@ typedef struct _TTSERV {                 /* type of structure for a server */
   void *opq_log;                         /* opaque pointer for logging */
   TTTIMER timers[TTTIMERMAX];            /* timer objects */
   int timernum;                          /* number of timer objects */
-  void (*do_task)(TTSOCK *, void *, TTREQ *req);  /* call back function for task */
+  void (*do_task)(TTSOCK *, void *, TTREQ *);  /* call back function for task */
   void *opq_task;                        /* opaque pointer for task */
+  void (*do_term)(void *);               /* call back gunction for termination */
+  void *opq_term;                        /* opaque pointer for termination */
 } TTSERV;
 
 enum {                                   /* enumeration for logging levels */
@@ -387,6 +391,14 @@ void ttservaddtimedhandler(TTSERV *serv, double freq, void (*do_timed)(void *), 
 void ttservsettaskhandler(TTSERV *serv, void (*do_task)(TTSOCK *, void *, TTREQ *), void *opq);
 
 
+/* Set the termination handler of a server object.
+   `serv' specifies the server object.
+   `do_term' specifies the pointer to a function to do with a task.  Its parameter is the opaque
+   pointer.
+   `opq' specifies the opaque pointer to be passed to the handler.  It can be `NULL'. */
+void ttservsettermhandler(TTSERV *serv, void (*do_term)(void *), void *opq);
+
+
 /* Start the service of a server object.
    `serv' specifies the server object.
    If successful, the return value is true, else, it is false. */
@@ -413,15 +425,28 @@ void ttservlog(TTSERV *serv, int level, const char *format, ...);
 bool ttserviskilled(TTSERV *serv);
 
 
+/* Break a simple server expression.
+   `expr' specifies the simple server expression.  It is composed of two substrings separated
+   by ":".  The former field specifies the name or the address of the server.  The latter field
+   specifies the port number.  If the latter field is omitted, the default port number is
+   specified.
+   `pp' specifies the pointer to a variable to which the port number is assigned.  If it is
+   `NULL', it is not used.
+   The return value is the string of the host name.
+   Because  the region of the return value is allocated with the `malloc' call, it should be
+   released with the `free' call when it is no longer in use. */
+char *ttbreakservexpr(const char *expr, int *pp);
+
+
 
 /*************************************************************************************************
  * features for experts
  *************************************************************************************************/
 
 
-#define _TT_VERSION    "1.1.23"
-#define _TT_LIBVER     306
-#define _TT_PROTVER    "0.9"
+#define _TT_VERSION    "1.1.33"
+#define _TT_LIBVER     316
+#define _TT_PROTVER    "0.91"
 
 
 /* Switch the process into the background.
@@ -432,6 +457,18 @@ bool ttdaemonize(void);
 /* Get the load average of the system.
    The return value is the load average of the system. */
 double ttgetloadavg(void);
+
+
+/* Convert a string to a time stamp.
+   `str' specifies the string.
+   The return value is the time stamp. */
+uint64_t ttstrtots(const char *str);
+
+
+/* Get the command name of a command ID number.
+   `id' specifies the command ID number.
+   The return value is the string of the command name. */
+const char *ttcmdidtostr(int id);
 
 
 /* tricks for backward compatibility */

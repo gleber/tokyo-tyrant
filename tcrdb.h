@@ -44,9 +44,15 @@ __TCRDB_CLINKAGEBEGIN
 
 
 typedef struct {                         /* type of structure for a remote database */
+  pthread_mutex_t mmtx;                  /* mutex for method */
+  pthread_key_t eckey;                   /* key for thread specific error code */
+  char *host;                            /* host name */
+  int port;                              /* port number */
+  char *expr;                            /* simple server expression */
   int fd;                                /* file descriptor */
   TTSOCK *sock;                          /* socket object */
-  int ecode;                             /* last happened error code */
+  double timeout;                        /* timeout */
+  int opts;                              /* options */
 } TCRDB;
 
 enum {                                   /* enumeration for error codes */
@@ -61,12 +67,20 @@ enum {                                   /* enumeration for error codes */
   TTEMISC = 9999                         /* miscellaneous error */
 };
 
+enum {                                   /* enumeration for tuning options */
+  RDBTRECON = 1 << 0                     /* reconnect automatically */
+};
+
 enum {                                   /* enumeration for scripting extension options */
   RDBXOLCKREC = 1 << 0,                  /* record locking */
   RDBXOLCKGLB = 1 << 1                   /* global locking */
 };
 
-enum {                                   /* enumeration for scripting extension options */
+enum {                                   /* enumeration for restore options */
+  RDBROCHKCON = 1 << 0                   /* consistency checking */
+};
+
+enum {                                   /* enumeration for miscellaneous operation options */
   RDBMONOULOG = 1 << 0                   /* omission of update log */
 };
 
@@ -97,6 +111,17 @@ void tcrdbdel(TCRDB *rdb);
 int tcrdbecode(TCRDB *rdb);
 
 
+/* Set the tuning parameters of a hash database object.
+   `rdb' specifies the remote database object.
+   `timeout' specifies the timeout of each query in seconds.  If it is not more than 0, the
+   timeout is not specified.
+   `opts' specifies options by bitwise-or: `RDBTRECON' specifies that the connection is recovered
+   automatically when it is disconnected.
+   If successful, the return value is true, else, it is false.
+   Note that the tuning parameters should be set before the database is opened. */
+bool tcrdbtune(TCRDB *rdb, double timeout, int opts);
+
+
 /* Open a remote database.
    `rdb' specifies the remote database object.
    `host' specifies the name or the address of the server.
@@ -104,6 +129,16 @@ int tcrdbecode(TCRDB *rdb);
    the path of the socket file is specified by the host parameter.
    If successful, the return value is true, else, it is false. */
 bool tcrdbopen(TCRDB *rdb, const char *host, int port);
+
+
+/* Open a remote database with a simple server expression.
+   `rdb' specifies the remote database object.
+   `expr' specifies the simple server expression.  It is composed of two substrings separated
+   by ":".  The former field specifies the name or the address of the server.  The latter field
+   specifies the port number.  If the latter field is omitted, the default port number is
+   specified.
+   If successful, the return value is true, else, it is false. */
+bool tcrdbopen2(TCRDB *rdb, const char *expr);
 
 
 /* Close a remote database object.
@@ -317,8 +352,8 @@ char *tcrdbiternext2(TCRDB *rdb);
    `psiz' specifies the size of the region of the prefix.
    `max' specifies the maximum number of keys to be fetched.  If it is negative, no limit is
    specified.
-   The return value is a list object of the corresponding keys.  This function does never fail
-   and return an empty list even if no key corresponds.
+   The return value is a list object of the corresponding keys.  This function does never fail.
+   It returns an empty list even if no key corresponds.
    Because the object of the return value is created with the function `tclistnew', it should be
    deleted with the function `tclistdel' when it is no longer in use. */
 TCLIST *tcrdbfwmkeys(TCRDB *rdb, const void *pbuf, int psiz, int max);
@@ -329,15 +364,15 @@ TCLIST *tcrdbfwmkeys(TCRDB *rdb, const void *pbuf, int psiz, int max);
    `pstr' specifies the string of the prefix.
    `max' specifies the maximum number of keys to be fetched.  If it is negative, no limit is
    specified.
-   The return value is a list object of the corresponding keys.  This function does never fail
-   and return an empty list even if no key corresponds.
+   The return value is a list object of the corresponding keys.  This function does never fail.
+   It returns an empty list even if no key corresponds.
    Because the object of the return value is created with the function `tclistnew', it should be
    deleted with the function `tclistdel' when it is no longer in use. */
 TCLIST *tcrdbfwmkeys2(TCRDB *rdb, const char *pstr, int max);
 
 
 /* Add an integer to a record in a remote database object.
-   `rdb' specifies the remote database object connected as a writer.
+   `rdb' specifies the remote database object.
    `kbuf' specifies the pointer to the region of the key.
    `ksiz' specifies the size of the region of the key.
    `num' specifies the additional value.
@@ -348,11 +383,11 @@ int tcrdbaddint(TCRDB *rdb, const void *kbuf, int ksiz, int num);
 
 
 /* Add a real number to a record in a remote database object.
-   `rdb' specifies the remote database object connected as a writer.
+   `rdb' specifies the remote database object.
    `kbuf' specifies the pointer to the region of the key.
    `ksiz' specifies the size of the region of the key.
    `num' specifies the additional value.
-   If successful, the return value is the summation value, else, it is `NAN'.
+   If successful, the return value is the summation value, else, it is Not-a-Number.
    If the corresponding record exists, the value is treated as a real number and is added to.  If
    no record corresponds, a new record of the additional value is stored. */
 double tcrdbadddouble(TCRDB *rdb, const void *kbuf, int ksiz, double num);
@@ -399,6 +434,13 @@ char *tcrdbext2(TCRDB *rdb, const char *name, int opts, const char *kstr, const 
 bool tcrdbsync(TCRDB *rdb);
 
 
+/* Optimize the storage of a remove database object.
+   `rdb' specifies the remote database object.
+   `params' specifies the string of the tuning parameters.  If it is `NULL', it is not used.
+   If successful, the return value is true, else, it is false. */
+bool tcrdboptimize(TCRDB *rdb, const char *params);
+
+
 /* Remove all records of a remote database object.
    `rdb' specifies the remote database object.
    If successful, the return value is true, else, it is false. */
@@ -419,20 +461,41 @@ bool tcrdbcopy(TCRDB *rdb, const char *path);
 
 /* Restore the database file of a remote database object from the update log.
    `rdb' specifies the remote database object.
-   `path' specifies the path of the update log directory.  If it begins with `+', the trailing
-   substring is treated as the path and consistency checking is omitted.
+   `path' specifies the path of the update log directory.
    `ts' specifies the beginning timestamp in microseconds.
+   `opts' specifies options by bitwise-or: `RDBROCHKCON' for consistency checking.
    If successful, the return value is true, else, it is false. */
-bool tcrdbrestore(TCRDB *rdb, const char *path, uint64_t ts);
+bool tcrdbrestore(TCRDB *rdb, const char *path, uint64_t ts, int opts);
 
 
-/* Set the replication master of a remote database object from the update log.
+/* Set the replication master of a remote database object.
    `rdb' specifies the remote database object.
    `host' specifies the name or the address of the server.  If it is `NULL', replication of the
    database is disabled.
    `port' specifies the port number.
+   `ts' specifies the beginning timestamp in microseconds.
+   `opts' specifies options by bitwise-or: `RDBROCHKCON' for consistency checking.
    If successful, the return value is true, else, it is false. */
-bool tcrdbsetmst(TCRDB *rdb, const char *host, int port);
+bool tcrdbsetmst(TCRDB *rdb, const char *host, int port, uint64_t ts, int opts);
+
+
+/* Set the replication master of a remote database object with a simple server expression.
+   `rdb' specifies the remote database object.
+   `expr' specifies the simple server expression.  It is composed of two substrings separated
+   by ":".  The former field specifies the name or the address of the server.  The latter field
+   specifies the port number.  If the latter field is omitted, the default port number is
+   specified.
+   `ts' specifies the beginning timestamp in microseconds.
+   `opts' specifies options by bitwise-or: `RDBROCHKCON' for consistency checking.
+   If successful, the return value is true, else, it is false. */
+bool tcrdbsetmst2(TCRDB *rdb, const char *expr, uint64_t ts, int opts);
+
+
+/* Get the simple server expression of an abstract database object.
+   `rdb' specifies the remote database object.
+   The return value is the simple server expression or `NULL' if the object does not connect to
+   any database server. */
+const char *tcrdbexpr(TCRDB *rdb);
 
 
 /* Get the number of records of a remote database object.
@@ -484,6 +547,8 @@ TCLIST *tcrdbmisc(TCRDB *rdb, const char *name, int opts, const TCLIST *args);
 enum {                                   /* enumeration for index types */
   RDBITLEXICAL = TDBITLEXICAL,           /* lexical string */
   RDBITDECIMAL = TDBITDECIMAL,           /* decimal string */
+  RDBITTOKEN = TDBITTOKEN,               /* token inverted index */
+  RDBITQGRAM = TDBITQGRAM,               /* q-gram inverted index */
   RDBITOPT = TDBITOPT,                   /* optimize */
   RDBITVOID = TDBITVOID,                 /* void */
   RDBITKEEP = TDBITKEEP                  /* keep existing index */
@@ -492,6 +557,7 @@ enum {                                   /* enumeration for index types */
 typedef struct {                         /* type of structure for a query */
   TCRDB *rdb;                            /* database object */
   TCLIST *args;                          /* arguments for the method */
+  TCXSTR *hint;                          /* hint string */
 } RDBQRY;
 
 enum {                                   /* enumeration for query conditions */
@@ -510,6 +576,10 @@ enum {                                   /* enumeration for query conditions */
   RDBQCNUMLE = TDBQCNUMLE,               /* number is less than or equal to */
   RDBQCNUMBT = TDBQCNUMBT,               /* number is between two tokens of */
   RDBQCNUMOREQ = TDBQCNUMOREQ,           /* number is equal to at least one token in */
+  RDBQCFTSPH = TDBQCFTSPH,               /* full-text search with the phrase of */
+  RDBQCFTSAND = TDBQCFTSAND,             /* full-text search with all tokens in */
+  RDBQCFTSOR = TDBQCFTSOR,               /* full-text search with at least one token in */
+  RDBQCFTSEX = TDBQCFTSEX,               /* full-text search with the compound expression of */
   RDBQCNEGATE = TDBQCNEGATE,             /* negation flag */
   RDBQCNOIDX = TDBQCNOIDX                /* no index flag */
 };
@@ -521,9 +591,15 @@ enum {                                   /* enumeration for order types */
   RDBQONUMDESC = TDBQONUMDESC            /* number descending */
 };
 
+enum {                                   /* enumeration for set operation types */
+  RDBMSUNION = TDBMSUNION,               /* union */
+  RDBMSISECT = TDBMSISECT,               /* intersection */
+  RDBMSDIFF = TDBMSDIFF                  /* difference */
+};
+
 
 /* Store a record into a remote database object.
-   `rdb' specifies the remote database object connected as a writer.
+   `rdb' specifies the remote database object.
    `pkbuf' specifies the pointer to the region of the primary key.
    `pksiz' specifies the size of the region of the primary key.
    `cols' specifies a map object containing columns.
@@ -533,7 +609,7 @@ bool tcrdbtblput(TCRDB *rdb, const void *pkbuf, int pksiz, TCMAP *cols);
 
 
 /* Store a new record into a remote database object.
-   `rdb' specifies the remote database object connected as a writer.
+   `rdb' specifies the remote database object.
    `pkbuf' specifies the pointer to the region of the primary key.
    `pksiz' specifies the size of the region of the primary key.
    `cols' specifies a map object containing columns.
@@ -543,7 +619,7 @@ bool tcrdbtblputkeep(TCRDB *rdb, const void *pkbuf, int pksiz, TCMAP *cols);
 
 
 /* Concatenate columns of the existing record in a remote database object.
-   `rdb' specifies the remote database object connected as a writer.
+   `rdb' specifies the remote database object.
    `pkbuf' specifies the pointer to the region of the primary key.
    `pksiz' specifies the size of the region of the primary key.
    `cols' specifies a map object containing columns.
@@ -553,7 +629,7 @@ bool tcrdbtblputcat(TCRDB *rdb, const void *pkbuf, int pksiz, TCMAP *cols);
 
 
 /* Remove a record of a remote database object.
-   `rdb' specifies the remote database object connected as a writer.
+   `rdb' specifies the remote database object.
    `pkbuf' specifies the pointer to the region of the primary key.
    `pksiz' specifies the size of the region of the primary key.
    If successful, the return value is true, else, it is false. */
@@ -572,20 +648,19 @@ TCMAP *tcrdbtblget(TCRDB *rdb, const void *pkbuf, int pksiz);
 
 
 /* Set a column index to a remote database object.
-   `rdb' specifies the remote database object connected as a writer.
+   `rdb' specifies the remote database object.
    `name' specifies the name of a column.  If the name of an existing index is specified, the
    index is rebuilt.  An empty string means the primary key.
    `type' specifies the index type: `RDBITLEXICAL' for lexical string, `RDBITDECIMAL' for decimal
-   string.  If it is `RDBITOPT', the index is optimized.  If it is `RDBITVOID', the index is
-   removed.  If `RDBITKEEP' is added by bitwise-or and the index exists, this function merely
-   returns failure.
-   If successful, the return value is true, else, it is false.
-   Note that the setting indexes should be set after the database is opened. */
+   string, `RDBITTOKEN' for token inverted index, `RDBITQGRAM' for q-gram inverted index.  If it
+   is `RDBITOPT', the index is optimized.  If it is `RDBITVOID', the index is removed.  If
+   `RDBITKEEP' is added by bitwise-or and the index exists, this function merely returns failure.
+   If successful, the return value is true, else, it is false. */
 bool tcrdbtblsetindex(TCRDB *rdb, const char *name, int type);
 
 
 /* Generate a unique ID number of a remote database object.
-   `rdb' specifies the remote database object connected as a writer.
+   `rdb' specifies the remote database object.
    The return value is the new unique ID number or -1 on failure. */
 int64_t tcrdbtblgenuid(TCRDB *rdb);
 
@@ -615,7 +690,10 @@ void tcrdbqrydel(RDBQRY *qry);
    greater than or equal to the expression, `RDBQCNUMLT' for number which is less than the
    expression, `RDBQCNUMLE' for number which is less than or equal to the expression, `RDBQCNUMBT'
    for number which is between two tokens of the expression, `RDBQCNUMOREQ' for number which is
-   equal to at least one token in the expression.  All operations can be flagged by bitwise-or:
+   equal to at least one token in the expression, `RDBQCFTSPH' for full-text search with the
+   phrase of the expression, `RDBQCFTSAND' for full-text search with all tokens in the expression,
+   `RDBQCFTSOR' for full-text search with at least one token in the expression, `RDBQCFTSEX' for
+   full-text search with the compound expression.  All operations can be flagged by bitwise-or:
    `RDBQCNEGATE' for negation, `RDBQCNOIDX' for using no index.
    `expr' specifies an operand exression. */
 void tcrdbqryaddcond(RDBQRY *qry, const char *name, int op, const char *expr);
@@ -641,14 +719,14 @@ void tcrdbqrysetlimit(RDBQRY *qry, int max, int skip);
 /* Execute the search of a query object.
    `qry' specifies the query object.
    The return value is a list object of the primary keys of the corresponding records.  This
-   function does never fail and return an empty list even if no record corresponds.
+   function does never fail.  It returns an empty list even if no record corresponds.
    Because the object of the return value is created with the function `tclistnew', it should
    be deleted with the function `tclistdel' when it is no longer in use. */
 TCLIST *tcrdbqrysearch(RDBQRY *qry);
 
 
 /* Remove each record corresponding to a query object.
-   `qry' specifies the query object of the database connected as a writer.
+   `qry' specifies the query object of the database.
    If successful, the return value is true, else, it is false. */
 bool tcrdbqrysearchout(RDBQRY *qry);
 
@@ -656,7 +734,7 @@ bool tcrdbqrysearchout(RDBQRY *qry);
 /* Get records corresponding to the search of a query object.
    `qry' specifies the query object.
    The return value is a list object of zero separated columns of the corresponding records.
-   This function does never fail and return an empty list even if no record corresponds.
+   This function does never fail.  It returns an empty list even if no record corresponds.
    Because the object of the return value is created with the function `tclistnew', it should
    be deleted with the function `tclistdel' when it is no longer in use. */
 TCLIST *tcrdbqrysearchget(RDBQRY *qry);
@@ -675,6 +753,39 @@ TCMAP *tcrdbqryrescols(TCLIST *res, int index);
    `qry' specifies the query object.
    The return value is the count of corresponding records or 0 on failure. */
 int tcrdbqrysearchcount(RDBQRY *qry);
+
+
+/* Get the hint string of a query object.
+   `qry' specifies the query object.
+   The return value is the hint string.
+   This function should be called after the query execution by `tcrdbqrysearch' and so on.  The
+   region of the return value is overwritten when this function is called again. */
+const char *tcrdbqryhint(RDBQRY *qry);
+
+
+/* Retrieve records with multiple query objects and get the set of the result.
+   `qrys' specifies an array of the query objects.
+   `num' specifies the number of elements of the array.
+   `type' specifies a set operation type: `RDBMSUNION' for the union set, `RDBMSISECT' for the
+   intersection set, `RDBMSDIFF' for the difference set.
+   The return value is a list object of the primary keys of the corresponding records.  This
+   function does never fail.  It returns an empty list even if no record corresponds.
+   If the first query object has the order setting, the result array is sorted by the order.
+   Because the object of the return value is created with the function `tclistnew', it should be
+   deleted with the function `tclistdel' when it is no longer in use. */
+TCLIST *tcrdbmetasearch(RDBQRY **qrys, int num, int type);
+
+
+
+/*************************************************************************************************
+ * features for experts
+ *************************************************************************************************/
+
+
+/* Set the error code of a remote database object.
+   `rdb' specifies the remote database object.
+   `ecode' specifies the error code. */
+void tcrdbsetecode(TCRDB *rdb, int ecode);
 
 
 

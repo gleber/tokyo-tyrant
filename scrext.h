@@ -51,14 +51,13 @@
    `adb' specifies the abstract database object.
    `ulog' specifies the update log object.
    `sid' specifies the server ID.
-   `stash' specifies the stash object.
-   `lcks' specifies the mutex objects for user locks.
-   `lcknum' specifies the number of user locks.
+   `stash' specifies the global stash object.
+   `lock' specifies the global lock object.
    `logger' specifies the pointer to a function to do with a log message.
    `logopq' specifies the opaque pointer for the logging function.
    The return value is the scripting object or `NULL' on failure. */
-void *scrextnew(void **screxts, int thnum, int thid, const char *path, TCADB *adb, TCULOG *ulog,
-                uint32_t sid, TCMDB *stash, pthread_mutex_t *lcks, int lcknum,
+void *scrextnew(void **screxts, int thnum, int thid, const char *path,
+                TCADB *adb, TCULOG *ulog, uint32_t sid, TCMDB *stash, TCMDB *lock,
                 void (*logger)(int, const char *, void *), void *logopq);
 
 
@@ -82,6 +81,12 @@ bool scrextdel(void *scr);
    Note that the returned region is released by the caller. */
 char *scrextcallmethod(void *scr, const char *name,
                        const void *kbuf, int ksiz, const void *vbuf, int vsiz, int *sp);
+
+
+/* Send the terminate signal to the scripting language extension.
+   `scr' specifies the scripting object.
+   If successful, the return value is true, else, it is false. */
+bool scrextkill(void *scr);
 
 
 

@@ -93,7 +93,8 @@ all : $(LIBRARYFILES) $(COMMANDFILES)
 clean :
 	rm -rf $(LIBRARYFILES) $(LIBOBJFILES) $(COMMANDFILES) \
 	  *.o a.out check.in check.out gmon.out leak.log words.tsv \
-	  casket casket-* casket.* *.ulog ulog 1978* 1979* *.rts *.pid *~ hoge moge
+	  casket casket-* casket.* *.tch *.tcb *.tcf *.tct *.idx.* \
+	  *.ulog ulog 1978* 1979* *.rts *.pid *~ hoge moge tako ika
 
 
 version :
@@ -169,25 +170,26 @@ distclean : clean
 check :
 	rm -rf casket* ulog
 	$(RUNENV) $(RUNCMD) ./tcrmgr version
-	$(RUNENV) $(RUNCMD) ./tcrtest write -cnum 5 -rnd 127.0.0.1 50000
-	$(RUNENV) $(RUNCMD) ./tcrtest write -cnum 5 -nr -rnd 127.0.0.1 50000
-	$(RUNENV) $(RUNCMD) ./tcrtest write -cnum 5 127.0.0.1 50000
-	$(RUNENV) $(RUNCMD) ./tcrtest read -cnum 5 127.0.0.1
-	$(RUNENV) $(RUNCMD) ./tcrtest read -cnum 5 -mul 5 127.0.0.1
-	$(RUNENV) $(RUNCMD) ./tcrtest remove -cnum 5 127.0.0.1
-	$(RUNENV) $(RUNCMD) ./tcrtest rcat -cnum 5 127.0.0.1 50000
-	$(RUNENV) $(RUNCMD) ./tcrtest rcat -cnum 5 -shl 50 127.0.0.1 50000
+	$(RUNENV) $(RUNCMD) ./tcrtest write -cnum 5 -tout 5 -rnd 127.0.0.1 50000
+	$(RUNENV) $(RUNCMD) ./tcrtest write -cnum 5 -tout 5 -nr -rnd 127.0.0.1 50000
+	$(RUNENV) $(RUNCMD) ./tcrtest write -cnum 5 -tout 5 127.0.0.1 50000
+	$(RUNENV) $(RUNCMD) ./tcrtest read -cnum 5 -tout 5 127.0.0.1
+	$(RUNENV) $(RUNCMD) ./tcrtest read -cnum 5 -tout 5 -mul 5 127.0.0.1
+	$(RUNENV) $(RUNCMD) ./tcrtest remove -cnum 5 -tout 5 127.0.0.1
+	$(RUNENV) $(RUNCMD) ./tcrtest rcat -cnum 5 -tout 5 127.0.0.1 50000
+	$(RUNENV) $(RUNCMD) ./tcrtest rcat -cnum 5 -tout 5 -shl 50 127.0.0.1 50000
 	$(RUNENV) $(RUNCMD) ./tcrmgr vanish 127.0.0.1
-	$(RUNENV) $(RUNCMD) ./tcrtest rcat -cnum 5 -dad 127.0.0.1 50000
-	$(RUNENV) $(RUNCMD) ./tcrtest rcat -cnum 5 -ext putcat -xlr 127.0.0.1 50000
-	$(RUNENV) $(RUNCMD) ./tcrtest misc -cnum 5 127.0.0.1 5000
-	$(RUNENV) $(RUNCMD) ./tcrtest wicked -cnum 5 127.0.0.1 5000
+	$(RUNENV) $(RUNCMD) ./tcrtest rcat -cnum 5 -tout 5 -dad 127.0.0.1 50000
+	$(RUNENV) $(RUNCMD) ./tcrtest rcat -cnum 5 -tout 5 -ext putcat -xlr 127.0.0.1 50000
+	$(RUNENV) $(RUNCMD) ./tcrtest misc -cnum 5 -tout 5 127.0.0.1 5000
+	$(RUNENV) $(RUNCMD) ./tcrtest wicked -cnum 5 -tout 5 127.0.0.1 5000
 	$(RUNENV) $(RUNCMD) ./tcrmgr inform 127.0.0.1
 	$(RUNENV) $(RUNCMD) ./tcrmgr vanish 127.0.0.1
 	$(RUNENV) $(RUNCMD) ./tcrmttest write -tnum 5 127.0.0.1 5000
 	$(RUNENV) $(RUNCMD) ./tcrmttest read -tnum 5 127.0.0.1
 	$(RUNENV) $(RUNCMD) ./tcrmttest remove -tnum 5 127.0.0.1
 	$(RUNENV) $(RUNCMD) ./tcrmttest write -tnum 5 -ext putcat -rnd 127.0.0.1 5000
+	$(RUNENV) $(RUNCMD) ./tcrmttest typical -tnum 5 127.0.0.1 5000
 	$(RUNENV) $(RUNCMD) ./tcrmgr vanish 127.0.0.1
 	$(RUNENV) $(RUNCMD) ./tcrmgr put 127.0.0.1 one first
 	$(RUNENV) $(RUNCMD) ./tcrmgr put 127.0.0.1 two second
@@ -227,6 +229,13 @@ check-valgrind :
 	make RUNCMD="valgrind --tool=memcheck --log-fd=1" check | tee leak.log
 	grep ERROR leak.log
 	grep 'at exit' leak.log
+
+
+check-forever :
+	while true ; \
+	  do \
+	    make check || break ; \
+	  done
 
 
 words :
@@ -283,6 +292,38 @@ libtokyotyrant.dylib : libtokyotyrant.$(LIBVER).$(LIBREV).0.dylib
 	ln -f -s libtokyotyrant.$(LIBVER).$(LIBREV).0.dylib $@
 
 
+ttskelmock.so : ttskelmock.o
+	$(CC) $(CFLAGS) -shared -o $@ $< $(LDFLAGS) $(LIBS)
+
+
+ttskeldir.so : ttskeldir.o
+	$(CC) $(CFLAGS) -shared -o $@ $< $(LDFLAGS) $(LIBS)
+
+
+ttskelproxy.so : ttskelproxy.o
+	$(CC) $(CFLAGS) -shared -o $@ $< $(LDFLAGS) $(LIBS)
+
+
+ttskelnull.so : ttskelnull.o
+	$(CC) $(CFLAGS) -shared -o $@ $< $(LDFLAGS) $(LIBS)
+
+
+ttskelmock.bundle : ttskelmock.o
+	$(CC) $(CFLAGS) -bundle -flat_namespace -undefined suppress -o $@ $< $(LDFLAGS) $(LIBS)
+
+
+ttskeldir.bundle : ttskeldir.o
+	$(CC) $(CFLAGS) -bundle -flat_namespace -undefined suppress -o $@ $< $(LDFLAGS) $(LIBS)
+
+
+ttskelproxy.bundle : ttskelproxy.o
+	$(CC) $(CFLAGS) -bundle -flat_namespace -undefined suppress -o $@ $< $(LDFLAGS) $(LIBS)
+
+
+ttskelnull.bundle : ttskelnull.o
+	$(CC) $(CFLAGS) -bundle -flat_namespace -undefined suppress -o $@ $< $(LDFLAGS) $(LIBS)
+
+
 ttserver : ttserver.o scrext.o $(LIBRARYFILES)
 	$(LDENV) $(CC) $(CFLAGS) -o $@ $< scrext.o $(LDFLAGS) $(CMDLDFLAGS) -ltokyotyrant $(LIBS)
 
@@ -314,6 +355,8 @@ ttutil.o : myconf.h ttutil.h
 tculog.o : myconf.h ttutil.h tculog.h
 
 tcrdb.o : myconf.h ttutil.h tcrdb.h
+
+ttskelproxy.o : myconf.h ttutil.h tcrdb.h
 
 ttserver.o ttulmgr.o ttultest.o tcrtest.o tcrmgr.o : myconf.h ttutil.h tculog.h tcrdb.h
 

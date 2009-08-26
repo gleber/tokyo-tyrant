@@ -7,12 +7,12 @@
 #================================================================
 
 # Package name
-AC_INIT(tokyotyrant, 1.1.23)
+AC_INIT(tokyotyrant, 1.1.33)
 
 # Package information
 MYLIBVER=3
-MYLIBREV=6
-MYPROTVER="0.9"
+MYLIBREV=16
+MYPROTVER="0.91"
 
 # Targets
 MYHEADERFILES="ttutil.h tculog.h tcrdb.h"
@@ -242,11 +242,15 @@ then
     MYLIBRARYFILES="$MYLIBRARYFILES libtokyotyrant.$MYLIBVER.$MYLIBREV.0.dylib"
     MYLIBRARYFILES="$MYLIBRARYFILES libtokyotyrant.$MYLIBVER.dylib"
     MYLIBRARYFILES="$MYLIBRARYFILES libtokyotyrant.dylib"
+    MYLIBRARYFILES="$MYLIBRARYFILES ttskelmock.bundle ttskeldir.bundle ttskelproxy.bundle"
+    MYLIBRARYFILES="$MYLIBRARYFILES ttskelnull.bundle"
     MYLDLIBPATHENV="DYLD_LIBRARY_PATH"
   else
     MYLIBRARYFILES="$MYLIBRARYFILES libtokyotyrant.so.$MYLIBVER.$MYLIBREV.0"
     MYLIBRARYFILES="$MYLIBRARYFILES libtokyotyrant.so.$MYLIBVER"
     MYLIBRARYFILES="$MYLIBRARYFILES libtokyotyrant.so"
+    MYLIBRARYFILES="$MYLIBRARYFILES ttskelmock.so ttskeldir.so ttskelproxy.so"
+    MYLIBRARYFILES="$MYLIBRARYFILES ttskelnull.so"
   fi
 fi
 

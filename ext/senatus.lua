@@ -77,6 +77,18 @@ function iternext(key, value)
 end
 
 
+-- get forward matching keys
+function fwmkeys(key, value)
+   value = tonumber(value)
+   local keys = _fwmkeys(key, value)
+   local res = ""
+   for i = 1, #keys do
+      res = res .. keys[i] .. "\n"
+   end
+   return res
+end
+
+
 -- add an integer to a record
 function addint(key, value)
    value = tonumber(value)
@@ -194,6 +206,24 @@ function stashlist(key, value)
 end
 
 
+-- lock an arbitrary key
+function lock(key, value)
+   if not _lock(key) then
+      return nil
+   end
+   return "ok"
+end
+
+
+-- unlock an arbitrary key
+function unlock(key, value)
+   if not _unlock(key) then
+      return nil
+   end
+   return "ok"
+end
+
+
 -- get the status information
 function stat(key, value)
    local msg = ""
@@ -294,6 +324,20 @@ function misc(key, value)
 end
 
 
+-- split a string
+function split(key, value)
+   if #value < 1 then
+      value = nil
+   end
+   local elems = _split(key, value)
+   local res = ""
+   for i = 1, #elems do
+      res = res .. elems[i] .. "\n"
+   end
+   return res
+end
+
+
 -- encode or decode a string
 function codec(key, value)
    if key == "ucs" then
@@ -310,6 +354,23 @@ end
 -- get the hash value
 function hash(key, value)
    return _hash(key, value)
+end
+
+
+-- get the bitwise-and of two integers
+function bitand(key, value)
+   key = tonumber(key)
+   value = tonumber(value)
+   if not key or not value then
+      return nil
+   end
+   return _bit("and", key, value)
+end
+
+
+-- check matching with regular expressions
+function regex(key, value)
+   return tostring(_regex(key, value))
 end
 
 
@@ -399,6 +460,12 @@ function log(key, value)
 end
 
 
+-- log the current time
+function logtime(key, value)
+   _log("current time: " .. _time())
+end
+
+
 -- remove expired records of a table database
 function expire()
    local args = {};
@@ -421,6 +488,18 @@ function expire2()
    local res = _misc("search", args)
    if not res then
       _log("expiration was failed", 2)
+   end
+end
+
+
+-- defrag the database file
+function defrag()
+   local time = tonumber(os.date("%H%M"))
+   if time >= 2230 or time <= 0130 then
+      return nil
+   end
+   if not _misc("defrag") then
+      _log("defragmentation was failed", 2)
    end
 end
 

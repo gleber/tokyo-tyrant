@@ -20,85 +20,100 @@
 #include "myconf.h"
 #include "scrext.h"
 
-#define DEFPORT        1978              // default port
 #define DEFTHNUM       8                 // default thread number
 #define DEFPIDPATH     "ttserver.pid"    // default name of the PID file
 #define DEFRTSPATH     "ttserver.rts"    // default name of the RTS file
-#define MAXARGSIZ      (32*1024*1024)    // maximum size of each argument
-#define MAXARGNUM      (1*1024*1024)     // maximum number of arguments
+#define DEFULIMSIZ     (1LL<<30)         // default limit size of an update log file
+#define MAXARGSIZ      (32<<20)          // maximum size of each argument
+#define MAXARGNUM      (1<<20)           // maximum number of arguments
 #define NUMBUFSIZ      32                // size of a numeric buffer
 #define LINEBUFSIZ     8192              // size of a line buffer
 #define TOKENUNIT      256               // unit number of tokens
 #define RECMTXNUM      31                // number of mutexes of records
 #define STASHBNUM      1021              // bucket number of the script stash object
+#define REPLPERIOD     1.0               // period of calling replication request
 
-#define TTMSKPUT       (1ULL<<0)         /* bit mask of put command */
-#define TTMSKPUTKEEP   (1ULL<<1)         /* bit mask of putkeep command */
-#define TTMSKPUTCAT    (1ULL<<2)         /* bit mask of putcat command */
-#define TTMSKPUTSHL    (1ULL<<3)         /* bit mask of putshl command */
-#define TTMSKPUTNR     (1ULL<<4)         /* bit mask of putnr command */
-#define TTMSKOUT       (1ULL<<5)         /* bit mask of out command */
-#define TTMSKGET       (1ULL<<6)         /* bit mask of get command */
-#define TTMSKMGET      (1ULL<<7)         /* bit mask of mget command */
-#define TTMSKVSIZ      (1ULL<<8)         /* bit mask of vsiz command */
-#define TTMSKITERINIT  (1ULL<<9)         /* bit mask of iterinit command */
-#define TTMSKITERNEXT  (1ULL<<10)        /* bit mask of iternext command */
-#define TTMSKFWMKEYS   (1ULL<<11)        /* bit mask of fwmkeys command */
-#define TTMSKADDINT    (1ULL<<12)        /* bit mask of addint command */
-#define TTMSKADDDOUBLE (1ULL<<13)        /* bit mask of adddouble command */
-#define TTMSKEXT       (1ULL<<14)        /* bit mask of ext command */
-#define TTMSKSYNC      (1ULL<<15)        /* bit mask of sync command */
-#define TTMSKVANISH    (1ULL<<16)        /* bit mask of vanish command */
-#define TTMSKCOPY      (1ULL<<17)        /* bit mask of copy command */
-#define TTMSKRESTORE   (1ULL<<18)        /* bit mask of restore command */
-#define TTMSKSETMST    (1ULL<<19)        /* bit mask of setmst command */
-#define TTMSKRNUM      (1ULL<<20)        /* bit mask of rnum command */
-#define TTMSKSIZE      (1ULL<<21)        /* bit mask of size command */
-#define TTMSKSTAT      (1ULL<<22)        /* bit mask of stat command */
-#define TTMSKMISC      (1ULL<<23)        /* bit mask of stat command */
-#define TTMSKREPL      (1ULL<<24)        /* bit mask of repl command */
-#define TTMSKSLAVE     (1ULL<<25)        /* bit mask of slave command */
-#define TTMSKALLORG    (1ULL<<26)        /* bit mask of all commands the original */
-#define TTMSKALLMC     (1ULL<<27)        /* bit mask of all commands the memcached */
-#define TTMSKALLHTTP   (1ULL<<28)        /* bit mask of all commands the HTTP */
-#define TTMSKALLREAD   (1ULL<<29)        /* bit mask of all commands of reading */
-#define TTMSKALLWRITE  (1ULL<<30)        /* bit mask of all commands of writing */
-#define TTMSKALLMANAGE (1ULL<<31)        /* bit mask of all commands of managing */
+#define TTMSKPUT       (1ULL<<0)         // bit mask of put command
+#define TTMSKPUTKEEP   (1ULL<<1)         // bit mask of putkeep command
+#define TTMSKPUTCAT    (1ULL<<2)         // bit mask of putcat command
+#define TTMSKPUTSHL    (1ULL<<3)         // bit mask of putshl command
+#define TTMSKPUTNR     (1ULL<<4)         // bit mask of putnr command
+#define TTMSKOUT       (1ULL<<5)         // bit mask of out command
+#define TTMSKGET       (1ULL<<6)         // bit mask of get command
+#define TTMSKMGET      (1ULL<<7)         // bit mask of mget command
+#define TTMSKVSIZ      (1ULL<<8)         // bit mask of vsiz command
+#define TTMSKITERINIT  (1ULL<<9)         // bit mask of iterinit command
+#define TTMSKITERNEXT  (1ULL<<10)        // bit mask of iternext command
+#define TTMSKFWMKEYS   (1ULL<<11)        // bit mask of fwmkeys command
+#define TTMSKADDINT    (1ULL<<12)        // bit mask of addint command
+#define TTMSKADDDOUBLE (1ULL<<13)        // bit mask of adddouble command
+#define TTMSKEXT       (1ULL<<14)        // bit mask of ext command
+#define TTMSKSYNC      (1ULL<<15)        // bit mask of sync command
+#define TTMSKOPTIMIZE  (1ULL<<16)        // bit mask of sync command
+#define TTMSKVANISH    (1ULL<<17)        // bit mask of vanish command
+#define TTMSKCOPY      (1ULL<<19)        // bit mask of copy command
+#define TTMSKRESTORE   (1ULL<<19)        // bit mask of restore command
+#define TTMSKSETMST    (1ULL<<20)        // bit mask of setmst command
+#define TTMSKRNUM      (1ULL<<21)        // bit mask of rnum command
+#define TTMSKSIZE      (1ULL<<22)        // bit mask of size command
+#define TTMSKSTAT      (1ULL<<23)        // bit mask of stat command
+#define TTMSKMISC      (1ULL<<24)        // bit mask of stat command
+#define TTMSKREPL      (1ULL<<25)        // bit mask of repl command
+#define TTMSKSLAVE     (1ULL<<26)        // bit mask of slave command
+#define TTMSKALLORG    (1ULL<<27)        // bit mask of all commands the original
+#define TTMSKALLMC     (1ULL<<28)        // bit mask of all commands the memcached
+#define TTMSKALLHTTP   (1ULL<<29)        // bit mask of all commands the HTTP
+#define TTMSKALLREAD   (1ULL<<30)        // bit mask of all commands of reading
+#define TTMSKALLWRITE  (1ULL<<31)        // bit mask of all commands of writing
+#define TTMSKALLMANAGE (1ULL<<32)        // bit mask of all commands of managing
 
 typedef struct {                         // type of structure of logging opaque object
   int fd;
 } LOGARG;
 
 typedef struct {                         // type of structure of master synchronous object
-  char host[TTADDRBUFSIZ];
-  int port;
-  const char *rtspath;
-  uint64_t rts;
-  TCADB *adb;
-  TCULOG *ulog;
-  uint32_t sid;
-  bool fail;
-  bool recon;
+  char host[TTADDRBUFSIZ];               // host name
+  int port;                              // port number
+  const char *rtspath;                   // path of the replication time stamp file
+  uint64_t rts;                          // replication time stamp
+  int opts;                              // options
+  TCADB *adb;                            // database object
+  TCULOG *ulog;                          // update log object
+  uint32_t sid;                          // server ID number
+  bool fail;                             // failure flag
+  bool recon;                            // re-connect flag
+  bool fatal;                            // fatal error flag
+  uint64_t mts;                          // modified time stamp
 } REPLARG;
 
-typedef struct {                         // type of structure of periodic command
-  const char *name;
-  TCADB *adb;
-  TCULOG *ulog;
-  uint32_t sid;
-  REPLARG *sarg;
-  void *scrext;
+typedef struct {                         // type of structure of periodic opaque object
+  const char *name;                      // function name
+  TCADB *adb;                            // database object
+  TCULOG *ulog;                          // update log object
+  uint32_t sid;                          // server ID number
+  REPLARG *sarg;                         // replication object
+  void *scrext;                          // script extension object
 } EXTPCARG;
 
 typedef struct {                         // type of structure of task opaque object
-  uint64_t mask;
-  TCADB *adb;
-  TCULOG *ulog;
-  uint32_t sid;
-  REPLARG *sarg;
-  pthread_mutex_t rmtxs[RECMTXNUM];
-  void **screxts;
+  uint64_t mask;                         // bit mask of commands
+  TCADB *adb;                            // database object
+  TCULOG *ulog;                          // update log object
+  uint32_t sid;                          // server ID number
+  REPLARG *sarg;                         // replication object
+  pthread_mutex_t rmtxs[RECMTXNUM];      // mutex for records
+  void **screxts;                        // script extension objects
 } TASKARG;
+
+typedef struct {                         // type of structure of termination opaque object
+  int thnum;                             // number of threads
+  TCADB *adb;                            // database object
+  REPLARG *sarg;                         // replication object
+  void **screxts;                        // script extension objects
+  EXTPCARG *pcargs;                      // periodic opaque objects
+  int pcnum;                             // number of periodic opaque objects
+  bool err;                              // error flag
+} TERMARG;
 
 
 /* global variables */
@@ -118,8 +133,8 @@ static void sigchldhandler(int signum);
 static int proc(const char *dbname, const char *host, int port, int thnum, int tout,
                 bool dmn, const char *pidpath, bool kl, const char *logpath,
                 const char *ulogpath, uint64_t ulim, bool uas, uint32_t sid,
-                const char *mhost, int mport, const char *rtspath, const char *extpath,
-                const TCLIST *extpcs, uint64_t mask);
+                const char *mhost, int mport, const char *rtspath, int ropts,
+                const char *skelpath, const char *extpath, const TCLIST *extpcs, uint64_t mask);
 static void do_log(int level, const char *msg, void *opq);
 static void do_slave(void *opq);
 static void do_extpc(void *opq);
@@ -142,6 +157,7 @@ static void do_addint(TTSOCK *sock, TASKARG *arg, TTREQ *req);
 static void do_adddouble(TTSOCK *sock, TASKARG *arg, TTREQ *req);
 static void do_ext(TTSOCK *sock, TASKARG *arg, TTREQ *req);
 static void do_sync(TTSOCK *sock, TASKARG *arg, TTREQ *req);
+static void do_optimize(TTSOCK *sock, TASKARG *arg, TTREQ *req);
 static void do_vanish(TTSOCK *sock, TASKARG *arg, TTREQ *req);
 static void do_copy(TTSOCK *sock, TASKARG *arg, TTREQ *req);
 static void do_restore(TTSOCK *sock, TASKARG *arg, TTREQ *req);
@@ -167,6 +183,8 @@ static void do_http_head(TTSOCK *sock, TASKARG *arg, TTREQ *req, int ver, const 
 static void do_http_put(TTSOCK *sock, TASKARG *arg, TTREQ *req, int ver, const char *uri);
 static void do_http_post(TTSOCK *sock, TASKARG *arg, TTREQ *req, int ver, const char *uri);
 static void do_http_delete(TTSOCK *sock, TASKARG *arg, TTREQ *req, int ver, const char *uri);
+static void do_http_options(TTSOCK *sock, TASKARG *arg, TTREQ *req, int ver, const char *uri);
+static void do_term(void *opq);
 
 
 /* main routine */
@@ -180,17 +198,19 @@ int main(int argc, char **argv){
   char *ulogpath = NULL;
   char *mhost = NULL;
   char *rtspath = NULL;
+  char *skelpath = NULL;
   char *extpath = NULL;
   TCLIST *extpcs = NULL;
-  int port = DEFPORT;
+  int port = TTDEFPORT;
   int thnum = DEFTHNUM;
   int tout = 0;
   bool dmn = false;
   bool kl = false;
-  uint64_t ulim = 0;
+  uint64_t ulim = DEFULIMSIZ;
   bool uas = false;
   uint32_t sid = 0;
-  int mport = DEFPORT;
+  int mport = TTDEFPORT;
+  int ropts = 0;
   uint64_t mask = 0;
   for(int i = 1; i < argc; i++){
     if(!dbname && argv[i][0] == '-'){
@@ -240,6 +260,11 @@ int main(int argc, char **argv){
       } else if(!strcmp(argv[i], "-rts")){
         if(++i >= argc) usage();
         rtspath = argv[i];
+      } else if(!strcmp(argv[i], "-rcc")){
+        ropts |= RDBROCHKCON;
+      } else if(!strcmp(argv[i], "-skel")){
+        if(++i >= argc) usage();
+        skelpath = argv[i];
       } else if(!strcmp(argv[i], "-ext")){
         if(++i >= argc) usage();
         extpath = argv[i];
@@ -272,20 +297,11 @@ int main(int argc, char **argv){
   if(!dbname) dbname = "*";
   if(thnum < 1 || mport < 1) usage();
   if(dmn && !pidpath) pidpath = DEFPIDPATH;
-  if(sid < 1){
-    sid = port;
-    char name[TTADDRBUFSIZ];
-    if(ttgetlocalhostname(name)){
-      for(int i = 0; name[i] != '\0'; i++){
-        sid = sid * 31 + ((unsigned char *)name)[i];
-      }
-    }
-    sid = sid & INT_MAX;
-  }
   if(!rtspath) rtspath = DEFRTSPATH;
   g_serv = ttservnew();
   int rv = proc(dbname, host, port, thnum, tout, dmn, pidpath, kl, logpath,
-                ulogpath, ulim, uas, sid, mhost, mport, rtspath, extpath, extpcs, mask);
+                ulogpath, ulim, uas, sid, mhost, mport, rtspath, ropts,
+                skelpath, extpath, extpcs, mask);
   ttservdel(g_serv);
   if(extpcs) tclistdel(extpcs);
   return rv;
@@ -299,8 +315,9 @@ static void usage(void){
   fprintf(stderr, "usage:\n");
   fprintf(stderr, "  %s [-host name] [-port num] [-thnum num] [-tout num]"
           " [-dmn] [-pid path] [-kl] [-log path] [-ld|-le] [-ulog path] [-ulim num] [-uas]"
-          " [-sid num] [-mhost name] [-mport num] [-rts path] [-ext path] [-extpc name period]"
-          " [-mask expr] [-unmask expr] [dbname]\n", g_progname);
+          " [-sid num] [-mhost name] [-mport num] [-rts path] [-rcc] [-skel name]"
+          " [-ext path] [-extpc name period] [-mask expr] [-unmask expr] [dbname]\n",
+          g_progname);
   fprintf(stderr, "\n");
   exit(1);
 }
@@ -313,7 +330,7 @@ static uint64_t getcmdmask(const char *expr){
   for(int i = 0; i < tclistnum(fields); i++){
     const char *name = tclistval2(fields, i);
     if(tcstrifwm(name, "0x")){
-      mask |= strtoll(name, NULL, 16);
+      mask |= tcatoih(name);
     } else if(!tcstricmp(name, "put")){
       mask |= TTMSKPUT;
     } else if(!tcstricmp(name, "putkeep")){
@@ -346,6 +363,8 @@ static uint64_t getcmdmask(const char *expr){
       mask |= TTMSKEXT;
     } else if(!tcstricmp(name, "sync")){
       mask |= TTMSKSYNC;
+    } else if(!tcstricmp(name, "optimize")){
+      mask |= TTMSKOPTIMIZE;
     } else if(!tcstricmp(name, "vanish")){
       mask |= TTMSKVANISH;
     } else if(!tcstricmp(name, "copy")){
@@ -404,8 +423,8 @@ static void sigchldhandler(int signum){
 static int proc(const char *dbname, const char *host, int port, int thnum, int tout,
                 bool dmn, const char *pidpath, bool kl, const char *logpath,
                 const char *ulogpath, uint64_t ulim, bool uas, uint32_t sid,
-                const char *mhost, int mport, const char *rtspath, const char *extpath,
-                const TCLIST *extpcs, uint64_t mask){
+                const char *mhost, int mport, const char *rtspath, int ropts,
+                const char *skelpath, const char *extpath, const TCLIST *extpcs, uint64_t mask){
   LOGARG larg;
   larg.fd = 1;
   ttservsetloghandler(g_serv, do_log, &larg);
@@ -424,6 +443,8 @@ static int proc(const char *dbname, const char *host, int port, int thnum, int t
       ttservlog(g_serv, TTLOGINFO, "warning: mhost(%s) is not the absolute path", mhost);
     if(mhost && rtspath && *rtspath != MYPATHCHR)
       ttservlog(g_serv, TTLOGINFO, "warning: rts(%s) is not the absolute path", rtspath);
+    if(skelpath && strchr(skelpath, MYPATHCHR) && *skelpath != MYPATHCHR)
+      ttservlog(g_serv, TTLOGINFO, "warning: skel(%s) is not the absolute path", skelpath);
     if(extpath && *extpath != MYPATHCHR)
       ttservlog(g_serv, TTLOGINFO, "warning: ext(%s) is not the absolute path", extpath);
     if(chdir("/") == -1){
@@ -431,7 +452,7 @@ static int proc(const char *dbname, const char *host, int port, int thnum, int t
       return 1;
     }
   }
-  if(dbname && *dbname != '*' && *dbname != '+' && !strstr(dbname, ".tc"))
+  if(!skelpath && dbname && *dbname != '*' && *dbname != '+' && !strstr(dbname, ".tc"))
     ttservlog(g_serv, TTLOGINFO, "warning: dbname(%s) has no suffix for database type", dbname);
   struct stat sbuf;
   if(ulogpath && (stat(ulogpath, &sbuf) != 0 || !S_ISDIR(sbuf.st_mode)))
@@ -446,7 +467,7 @@ static int proc(const char *dbname, const char *host, int port, int thnum, int t
       if(kill(pid, SIGTERM) != 0) ttservlog(g_serv, TTLOGERROR, "kill failed");
       int cnt = 0;
       while(true){
-        usleep(1000 * 100);
+        tcsleep(0.1);
         if((numstr = tcreadfile(pidpath, -1, NULL)) != NULL){
           tcfree(numstr);
         } else {
@@ -467,6 +488,23 @@ static int proc(const char *dbname, const char *host, int port, int thnum, int t
       tcfree(numstr);
       ttservlog(g_serv, TTLOGERROR, "the process %lld may be already running", (long long)pid);
       return 1;
+    }
+  }
+  if(sid > UINT16_MAX){
+    ttservlog(g_serv, TTLOGINFO,
+              "warning: the SID is ignored because it exceeds %d", UINT16_MAX);
+    sid = 0;
+  }
+  if(sid < 1){
+    if(ulogpath){
+      ttservlog(g_serv, TTLOGINFO,
+                "warning: update logging is omitted because the SID is not specified");
+      ulogpath = NULL;
+    }
+    if(mhost){
+      ttservlog(g_serv, TTLOGINFO,
+                "warning: replication is omitted because the SID is not specified");
+      mhost = NULL;
     }
   }
   if(dmn && !ttdaemonize()){
@@ -498,8 +536,39 @@ static int proc(const char *dbname, const char *host, int port, int thnum, int t
             host ? host : "(any)", port);
   if(!ttservconf(g_serv, host, port)) return 1;
   bool err = false;
-  ttservlog(g_serv, TTLOGSYSTEM, "database configuration: name=%s", dbname);
   TCADB *adb = tcadbnew();
+  ADBSKEL skel;
+  memset(&skel, 0, sizeof(skel));
+  void *skellib = NULL;
+  if(skelpath){
+    ttservlog(g_serv, TTLOGSYSTEM, "skeleton database library: %s", skelpath);
+    skellib = dlopen(skelpath, RTLD_LAZY);
+    if(skellib){
+      void *initsym = dlsym(skellib, "initialize");
+      if(initsym){
+        bool (*initfunc)(ADBSKEL *);
+        memcpy(&initfunc, &initsym, sizeof(initsym));
+        if(initfunc(&skel)){
+          if(!tcadbsetskel(adb, &skel)){
+            if(skel.opq && skel.del) skel.del(skel.opq);
+            err = true;
+            ttservlog(g_serv, TTLOGERROR, "tcadbsetskel failed");
+          }
+        } else {
+          if(skel.opq && skel.del) skel.del(skel.opq);
+          err = true;
+          ttservlog(g_serv, TTLOGERROR, "initialize failed");
+        }
+      } else {
+        err = true;
+        ttservlog(g_serv, TTLOGERROR, "dlsym failed: %s", dlerror());
+      }
+    } else {
+      err = true;
+      ttservlog(g_serv, TTLOGERROR, "dlopen failed: %s", dlerror());
+    }
+  }
+  ttservlog(g_serv, TTLOGSYSTEM, "opening the database: %s", dbname);
   if(!tcadbopen(adb, dbname)){
     err = true;
     ttservlog(g_serv, TTLOGERROR, "tcadbopen failed");
@@ -519,31 +588,23 @@ static int proc(const char *dbname, const char *host, int port, int thnum, int t
   }
   ttservtune(g_serv, thnum, tout);
   if(mhost)
-    ttservlog(g_serv, TTLOGSYSTEM, "replication configuration: host=%s port=%d", mhost, mport);
+    ttservlog(g_serv, TTLOGSYSTEM, "replication configuration: host=%s port=%d ropts=%d",
+              mhost, mport, ropts);
   void *screxts[thnum];
   TCMDB *scrstash = NULL;
+  TCMDB *scrlock = NULL;
   pthread_mutex_t *scrlcks = NULL;
   if(extpath){
     ttservlog(g_serv, TTLOGSYSTEM, "scripting extension: %s", extpath);
     scrstash = tcmdbnew2(STASHBNUM);
-    scrlcks = tcmalloc(sizeof(*scrlcks) * RECMTXNUM);
-    for(int i = 0; i < RECMTXNUM; i++){
-      pthread_mutexattr_t attr;
-      if(pthread_mutexattr_init(&attr) != 0)
-        ttservlog(g_serv, TTLOGERROR, "pthread_mutexattr_init failed");
-      if(pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ERRORCHECK) != 0)
-        ttservlog(g_serv, TTLOGERROR, "pthread_mutexattr_settype failed");
-      if(pthread_mutex_init(scrlcks + i, &attr) != 0)
-        ttservlog(g_serv, TTLOGERROR, "pthread_mutex_init failed");
-      pthread_mutexattr_destroy(&attr);
-    }
+    scrlock = tcmdbnew2(thnum * 2 + 1);
     bool screrr = false;
     for(int i = 0; i < thnum; i++){
       screxts[i] = NULL;
     }
     for(int i = 0; i < thnum; i++){
-      screxts[i] = scrextnew(screxts, thnum, i, extpath, adb, ulog, sid, scrstash,
-                             scrlcks, RECMTXNUM, do_log, &larg);
+      screxts[i] = scrextnew(screxts, thnum, i, extpath, adb, ulog, sid, scrstash, scrlock,
+                             do_log, &larg);
       if(!screxts[i]) screrr = true;
     }
     if(screrr){
@@ -562,12 +623,15 @@ static int proc(const char *dbname, const char *host, int port, int thnum, int t
   sarg.port = mport;
   sarg.rtspath = rtspath;
   sarg.rts = 0;
+  sarg.opts = ropts;
   sarg.adb = adb;
   sarg.ulog = ulog;
   sarg.sid = sid;
   sarg.fail = false;
   sarg.recon = false;
-  if(!(mask & TTMSKSLAVE)) ttservaddtimedhandler(g_serv, 1.0, do_slave, &sarg);
+  sarg.fatal = false;
+  sarg.mts = 0;
+  if(!(mask & TTMSKSLAVE)) ttservaddtimedhandler(g_serv, REPLPERIOD, do_slave, &sarg);
   EXTPCARG *pcargs = NULL;
   int pcnum = 0;
   if(extpath && extpcs){
@@ -582,8 +646,8 @@ static int proc(const char *dbname, const char *host, int port, int thnum, int t
       pcarg->ulog = ulog;
       pcarg->sid = sid;
       pcarg->sarg = &sarg;
-      pcarg->scrext = scrextnew(screxts, thnum, thnum + i, extpath, adb, ulog, sid, scrstash,
-                                scrlcks, RECMTXNUM, do_log, &larg);
+      pcarg->scrext = scrextnew(screxts, thnum, thnum + i, extpath, adb, ulog, sid,
+                                scrstash, scrlock, do_log, &larg);
       if(pcarg->scrext){
         if(*name && period > 0) ttservaddtimedhandler(g_serv, period, do_extpc, pcarg);
       } else {
@@ -604,6 +668,15 @@ static int proc(const char *dbname, const char *host, int port, int thnum, int t
   }
   targ.screxts = screxts;
   ttservsettaskhandler(g_serv, do_task, &targ);
+  TERMARG karg;
+  karg.thnum = thnum;
+  karg.adb = adb;
+  karg.sarg = &sarg;
+  karg.screxts = screxts;
+  karg.pcargs = pcargs;
+  karg.pcnum = pcnum;
+  karg.err = false;
+  ttservsettermhandler(g_serv, do_term, &karg);
   if(larg.fd != 1){
     close(larg.fd);
     larg.fd = 1;
@@ -627,10 +700,12 @@ static int proc(const char *dbname, const char *host, int port, int thnum, int t
     }
     if(!ttservstart(g_serv)) err = true;
   } while(g_restart);
+  if(karg.err) err = true;
   if(pcargs){
     for(int i = 0; i < pcnum; i++){
       EXTPCARG *pcarg = pcargs + i;
-      if(pcarg->scrext && !scrextdel(pcarg->scrext)){
+      if(!pcarg->scrext) continue;
+      if(!scrextdel(pcarg->scrext)){
         err = true;
         ttservlog(g_serv, TTLOGERROR, "scrextdel failed");
       }
@@ -655,15 +730,16 @@ static int proc(const char *dbname, const char *host, int port, int thnum, int t
     }
     tcfree(scrlcks);
   }
+  if(scrlock) tcmdbdel(scrlock);
   if(scrstash) tcmdbdel(scrstash);
   if(ulogpath && !tculogclose(ulog)){
     err = true;
     ttservlog(g_serv, TTLOGERROR, "tculogclose failed");
   }
   tculogdel(ulog);
-  if(!tcadbclose(adb)){
+  if(skellib && dlclose(skellib) != 0){
     err = true;
-    ttservlog(g_serv, TTLOGERROR, "tcadbclose failed");
+    ttservlog(g_serv, TTLOGERROR, "dlclose failed");
   }
   tcadbdel(adb);
   if(pidpath && unlink(pidpath) != 0){
@@ -682,8 +758,15 @@ static void do_log(int level, const char *msg, void *opq){
   LOGARG *arg = (LOGARG *)opq;
   char date[48];
   tcdatestrwww(INT64_MAX, INT_MAX, date);
+  const char *lvstr = "unknown";
+  switch(level){
+  case TTLOGDEBUG: lvstr = "DEBUG"; break;
+  case TTLOGINFO: lvstr = "INFO"; break;
+  case TTLOGERROR: lvstr = "ERROR"; break;
+  case TTLOGSYSTEM: lvstr = "SYSTEM"; break;
+  }
   char buf[LINEBUFSIZ];
-  int len = snprintf(buf, LINEBUFSIZ, "%s\t%s\n", date, msg);
+  int len = snprintf(buf, LINEBUFSIZ, "%s\t%s\t%s\n", date, lvstr, msg);
   tcwrite(arg ? arg->fd : 1, buf, len);
 }
 
@@ -694,7 +777,15 @@ static void do_slave(void *opq){
   TCADB *adb = arg->adb;
   TCULOG *ulog = arg->ulog;
   uint32_t sid = arg->sid;
+  if(arg->fatal) return;
   if(arg->host[0] == '\0' || arg->port < 1) return;
+  if(arg->mts > 0){
+    char rtsbuf[NUMBUFSIZ];
+    int len = sprintf(rtsbuf, "%llu\n", (unsigned long long)arg->mts);
+    if(!tcwritefile(arg->rtspath, rtsbuf, len))
+      ttservlog(g_serv, TTLOGERROR, "do_slave: tcwritefile failed");
+    arg->mts = 0;
+  }
   int rtsfd = open(arg->rtspath, O_RDWR | O_CREAT, 00644);
   if(rtsfd == -1){
     ttservlog(g_serv, TTLOGERROR, "do_slave: open failed");
@@ -710,12 +801,12 @@ static void do_slave(void *opq){
   memset(rtsbuf, 0, NUMBUFSIZ);
   arg->rts = 0;
   if(sbuf.st_size > 0 && tcread(rtsfd, rtsbuf, tclmin(NUMBUFSIZ - 1, sbuf.st_size)))
-    arg->rts = strtoll(rtsbuf, NULL, 10);
+    arg->rts = tcatoi(rtsbuf);
   TCREPL *repl = tcreplnew();
   pthread_cleanup_push((void (*)(void *))tcrepldel, repl);
   if(tcreplopen(repl, arg->host, arg->port, arg->rts + 1, sid)){
-    ttservlog(g_serv, TTLOGINFO, "replicating from %s:%d after %llu",
-              arg->host, arg->port, (unsigned long long)arg->rts);
+    ttservlog(g_serv, TTLOGINFO, "replicating from sid=%u (%s:%d) after %llu",
+              repl->mid, arg->host, arg->port, (unsigned long long)arg->rts);
     arg->fail = false;
     arg->recon = false;
     bool err = false;
@@ -726,9 +817,18 @@ static void do_slave(void *opq){
     while(!err && !ttserviskilled(g_serv) && !arg->recon &&
           (rbuf = tcreplread(repl, &rsiz, &rts, &rsid)) != NULL){
       if(rsiz < 1) continue;
-      if(!tculogadbredo(adb, rbuf, rsiz, true, ulog, rsid)){
+      bool cc;
+      if(!tculogadbredo(adb, rbuf, rsiz, ulog, rsid, repl->mid, &cc)){
         err = true;
         ttservlog(g_serv, TTLOGERROR, "do_slave: tculogadbredo failed");
+      } else if(!cc){
+        if(arg->opts & RDBROCHKCON){
+          err = true;
+          arg->fatal = true;
+          ttservlog(g_serv, TTLOGERROR, "do_slave: detected inconsistency");
+        } else {
+          ttservlog(g_serv, TTLOGINFO, "do_slave: detected inconsistency");
+        }
       }
       if(lseek(rtsfd, 0, SEEK_SET) != -1){
         int len = sprintf(rtsbuf, "%llu\n", (unsigned long long)rts);
@@ -819,6 +919,9 @@ static void do_task(TTSOCK *sock, void *opq, TTREQ *req){
     case TTCMDSYNC:
       do_sync(sock, arg, req);
       break;
+    case TTCMDOPTIMIZE:
+      do_optimize(sock, arg, req);
+      break;
     case TTCMDVANISH:
       do_vanish(sock, arg, req);
       break;
@@ -854,8 +957,10 @@ static void do_task(TTSOCK *sock, void *opq, TTREQ *req){
     ttsockungetc(sock, c);
     char *line = ttsockgets2(sock);
     if(line){
+      pthread_cleanup_push(tcfree, line);
       int tnum;
       char **tokens = tokenize(line, &tnum);
+      pthread_cleanup_push(tcfree, tokens);
       if(tnum > 0){
         const char *cmd = tokens[0];
         if(!strcmp(cmd, "set")){
@@ -897,11 +1002,13 @@ static void do_task(TTSOCK *sock, void *opq, TTREQ *req){
             do_http_post(sock, arg, req, ver, uri);
           } else if(!strcmp(cmd, "DELETE")){
             do_http_delete(sock, arg, req, ver, uri);
+          } else if(!strcmp(cmd, "OPTIONS")){
+            do_http_options(sock, arg, req, ver, uri);
           }
         }
       }
-      tcfree(tokens);
-      tcfree(line);
+      pthread_cleanup_pop(1);
+      pthread_cleanup_pop(1);
     }
   }
 }
@@ -965,7 +1072,7 @@ static void do_put(TTSOCK *sock, TASKARG *arg, TTREQ *req){
     if(mask & (TTMSKPUT | TTMSKALLORG | TTMSKALLWRITE)){
       code = 1;
       ttservlog(g_serv, TTLOGINFO, "do_put: forbidden");
-    } else if(!tculogadbput(ulog, sid, adb, buf, ksiz, buf + ksiz, vsiz)){
+    } else if(!tculogadbput(ulog, sid, 0, adb, buf, ksiz, buf + ksiz, vsiz)){
       code = 1;
       ttservlog(g_serv, TTLOGERROR, "do_put: operation failed");
     }
@@ -1003,7 +1110,7 @@ static void do_putkeep(TTSOCK *sock, TASKARG *arg, TTREQ *req){
     if(mask & (TTMSKPUTKEEP | TTMSKALLORG | TTMSKALLWRITE)){
       code = 1;
       ttservlog(g_serv, TTLOGINFO, "do_putkeep: forbidden");
-    } else if(!tculogadbputkeep(ulog, sid, adb, buf, ksiz, buf + ksiz, vsiz)){
+    } else if(!tculogadbputkeep(ulog, sid, 0, adb, buf, ksiz, buf + ksiz, vsiz)){
       code = 1;
     }
     if(ttsocksend(sock, &code, sizeof(code))){
@@ -1040,7 +1147,7 @@ static void do_putcat(TTSOCK *sock, TASKARG *arg, TTREQ *req){
     if(mask & (TTMSKPUTCAT | TTMSKALLORG | TTMSKALLWRITE)){
       code = 1;
       ttservlog(g_serv, TTLOGINFO, "do_putcat: forbidden");
-    } else if(!tculogadbputcat(ulog, sid, adb, buf, ksiz, buf + ksiz, vsiz)){
+    } else if(!tculogadbputcat(ulog, sid, 0, adb, buf, ksiz, buf + ksiz, vsiz)){
       code = 1;
       ttservlog(g_serv, TTLOGERROR, "do_putcat: operation failed");
     }
@@ -1103,7 +1210,7 @@ static void do_putshl(TTSOCK *sock, TASKARG *arg, TTREQ *req){
         nbuf = obuf + osiz - width;
         nsiz = width;
       }
-      if(!tculogadbput(ulog, sid, adb, buf, ksiz, nbuf, nsiz)){
+      if(!tculogadbput(ulog, sid, 0, adb, buf, ksiz, nbuf, nsiz)){
         code = 1;
         ttservlog(g_serv, TTLOGERROR, "do_putshl: operation failed");
       }
@@ -1148,7 +1255,7 @@ static void do_putnr(TTSOCK *sock, TASKARG *arg, TTREQ *req){
     if(mask & (TTMSKPUTNR | TTMSKALLORG | TTMSKALLWRITE)){
       code = 1;
       ttservlog(g_serv, TTLOGINFO, "do_putnr: forbidden");
-    } else if(!tculogadbput(ulog, sid, adb, buf, ksiz, buf + ksiz, vsiz)){
+    } else if(!tculogadbput(ulog, sid, 0, adb, buf, ksiz, buf + ksiz, vsiz)){
       code = 1;
       ttservlog(g_serv, TTLOGERROR, "do_putnr: operation failed");
     }
@@ -1180,7 +1287,7 @@ static void do_out(TTSOCK *sock, TASKARG *arg, TTREQ *req){
     if(mask & (TTMSKOUT | TTMSKALLORG | TTMSKALLWRITE)){
       code = 1;
       ttservlog(g_serv, TTLOGINFO, "do_out: forbidden");
-    } else if(!tculogadbout(ulog, sid, adb, buf, ksiz)){
+    } else if(!tculogadbout(ulog, sid, 0, adb, buf, ksiz)){
       code = 1;
     }
     if(ttsocksend(sock, &code, sizeof(code))){
@@ -1299,7 +1406,7 @@ static void do_mget(TTSOCK *sock, TASKARG *arg, TTREQ *req){
       }
     }
     num = TTHTONL((uint32_t)rnum);
-    *(uint32_t *)((char *)tcxstrptr(xstr) + sizeof(code)) = num;
+    memcpy((char *)tcxstrptr(xstr) + sizeof(code), &num, sizeof(num));
     if(ttsocksend(sock, tcxstrptr(xstr), tcxstrsize(xstr))){
       req->keep = true;
     } else {
@@ -1459,7 +1566,7 @@ static void do_fwmkeys(TTSOCK *sock, TASKARG *arg, TTREQ *req){
       }
     }
     num = TTHTONL((uint32_t)knum);
-    *(uint32_t *)((char *)tcxstrptr(xstr) + sizeof(code)) = num;
+    memcpy((char *)tcxstrptr(xstr) + sizeof(code), &num, sizeof(num));
     if(ttsocksend(sock, tcxstrptr(xstr), tcxstrsize(xstr))){
       req->keep = true;
     } else {
@@ -1496,7 +1603,7 @@ static void do_addint(TTSOCK *sock, TASKARG *arg, TTREQ *req){
       snum = INT_MIN;
       ttservlog(g_serv, TTLOGINFO, "do_addint: forbidden");
     } else {
-      snum = tculogadbaddint(ulog, sid, adb, buf, ksiz, anum);
+      snum = tculogadbaddint(ulog, sid, 0, adb, buf, ksiz, anum);
     }
     if(snum != INT_MIN){
       *stack = 0;
@@ -1547,7 +1654,7 @@ static void do_adddouble(TTSOCK *sock, TASKARG *arg, TTREQ *req){
       snum = nan("");
       ttservlog(g_serv, TTLOGINFO, "do_adddouble: forbidden");
     } else {
-      snum = tculogadbadddouble(ulog, sid, adb, buf, ksiz, anum);
+      snum = tculogadbadddouble(ulog, sid, 0, adb, buf, ksiz, anum);
     }
     if(!isnan(snum)){
       *stack = 0;
@@ -1671,11 +1778,13 @@ static void do_sync(TTSOCK *sock, TASKARG *arg, TTREQ *req){
   ttservlog(g_serv, TTLOGINFO, "doing sync command");
   uint64_t mask = arg->mask;
   TCADB *adb = arg->adb;
+  TCULOG *ulog = arg->ulog;
+  uint32_t sid = arg->sid;
   uint8_t code = 0;
   if(mask & (TTMSKSYNC | TTMSKALLORG | TTMSKALLMANAGE)){
     code = 1;
     ttservlog(g_serv, TTLOGINFO, "do_sync: forbidden");
-  } else if(!tcadbsync(adb)){
+  } else if(!tculogadbsync(ulog, sid, 0, adb)){
     code = 1;
     ttservlog(g_serv, TTLOGERROR, "do_sync: operation failed");
   }
@@ -1684,6 +1793,42 @@ static void do_sync(TTSOCK *sock, TASKARG *arg, TTREQ *req){
   } else {
     ttservlog(g_serv, TTLOGINFO, "do_sync: response failed");
   }
+}
+
+
+/* handle the optimize command */
+static void do_optimize(TTSOCK *sock, TASKARG *arg, TTREQ *req){
+  ttservlog(g_serv, TTLOGINFO, "doing optimize command");
+  uint64_t mask = arg->mask;
+  TCADB *adb = arg->adb;
+  TCULOG *ulog = arg->ulog;
+  uint32_t sid = arg->sid;
+  int psiz = ttsockgetint32(sock);
+  if(ttsockcheckend(sock) || psiz < 0 || psiz > MAXARGSIZ){
+    ttservlog(g_serv, TTLOGINFO, "do_optimize: invalid parameters");
+    return;
+  }
+  char stack[TTIOBUFSIZ];
+  char *buf = (psiz < TTIOBUFSIZ) ? stack : tcmalloc(psiz + 1);
+  pthread_cleanup_push(free, (buf == stack) ? NULL : buf);
+  if(ttsockrecv(sock, buf, psiz) && !ttsockcheckend(sock)){
+    buf[psiz] = '\0';
+    uint8_t code = 0;
+    if(mask & (TTMSKOPTIMIZE | TTMSKALLORG | TTMSKALLMANAGE)){
+      code = 1;
+      ttservlog(g_serv, TTLOGINFO, "do_optimize: forbidden");
+    } else if(!tculogadboptimize(ulog, sid, 0, adb, buf)){
+      code = 1;
+    }
+    if(ttsocksend(sock, &code, sizeof(code))){
+      req->keep = true;
+    } else {
+      ttservlog(g_serv, TTLOGINFO, "do_optimize: response failed");
+    }
+  } else {
+    ttservlog(g_serv, TTLOGINFO, "do_optimize: invalid entity");
+  }
+  pthread_cleanup_pop(1);
 }
 
 
@@ -1698,7 +1843,7 @@ static void do_vanish(TTSOCK *sock, TASKARG *arg, TTREQ *req){
   if(mask & (TTMSKVANISH | TTMSKALLORG | TTMSKALLWRITE)){
     code = 1;
     ttservlog(g_serv, TTLOGINFO, "do_vanish: forbidden");
-  } else if(!tculogadbvanish(ulog, sid, adb)){
+  } else if(!tculogadbvanish(ulog, sid, 0, adb)){
     code = 1;
     ttservlog(g_serv, TTLOGERROR, "do_vanish: operation failed");
   }
@@ -1753,6 +1898,7 @@ static void do_restore(TTSOCK *sock, TASKARG *arg, TTREQ *req){
   TCULOG *ulog = arg->ulog;
   int psiz = ttsockgetint32(sock);
   uint64_t ts = ttsockgetint64(sock);
+  int opts = ttsockgetint32(sock);
   if(ttsockcheckend(sock) || psiz < 0 || psiz > MAXARGSIZ){
     ttservlog(g_serv, TTLOGINFO, "do_restore: invalid parameters");
     return;
@@ -1762,11 +1908,7 @@ static void do_restore(TTSOCK *sock, TASKARG *arg, TTREQ *req){
   pthread_cleanup_push(free, (buf == stack) ? NULL : buf);
   if(ttsockrecv(sock, buf, psiz) && !ttsockcheckend(sock)){
     buf[psiz] = '\0';
-    bool con = true;
-    if(*buf == '+'){
-      con = false;
-      buf++;
-    }
+    bool con = (opts & RDBROCHKCON) != 0;
     uint8_t code = 0;
     if(mask & (TTMSKRESTORE | TTMSKALLORG | TTMSKALLMANAGE)){
       code = 1;
@@ -1794,6 +1936,8 @@ static void do_setmst(TTSOCK *sock, TASKARG *arg, TTREQ *req){
   REPLARG *sarg = arg->sarg;
   int hsiz = ttsockgetint32(sock);
   int port = ttsockgetint32(sock);
+  uint64_t ts = ttsockgetint64(sock);
+  int opts = ttsockgetint32(sock);
   if(ttsockcheckend(sock) || hsiz < 0 || hsiz > MAXARGSIZ || port < 0){
     ttservlog(g_serv, TTLOGINFO, "do_setmst: invalid parameters");
     return;
@@ -1810,7 +1954,10 @@ static void do_setmst(TTSOCK *sock, TASKARG *arg, TTREQ *req){
     } else {
       snprintf(sarg->host, TTADDRBUFSIZ, "%s", buf);
       sarg->port = port;
+      sarg->opts = opts;
       sarg->recon = true;
+      sarg->fatal = false;
+      sarg->mts = ts;
     }
     if(ttsocksend(sock, &code, sizeof(code))){
       req->keep = true;
@@ -1885,6 +2032,9 @@ static void do_stat(TTSOCK *sock, TASKARG *arg, TTREQ *req){
   } else {
     double now = tctime();
     wp += sprintf(wp, "version\t%s\n", ttversion);
+    wp += sprintf(wp, "libver\t%d\n", _TT_LIBVER);
+    wp += sprintf(wp, "protver\t%s\n", _TT_PROTVER);
+    wp += sprintf(wp, "os\t%s\n", TTSYSNAME);
     wp += sprintf(wp, "time\t%.6f\n", now);
     wp += sprintf(wp, "pid\t%lld\n", (long long)getpid());
     wp += sprintf(wp, "sid\t%d\n", arg->sid);
@@ -1896,7 +2046,10 @@ static void do_stat(TTSOCK *sock, TASKARG *arg, TTREQ *req){
     case ADBOBDB: wp += sprintf(wp, "type\tB+ tree\n"); break;
     case ADBOFDB: wp += sprintf(wp, "type\tfixed-length\n"); break;
     case ADBOTDB: wp += sprintf(wp, "type\ttable\n"); break;
+    case ADBOSKEL: wp += sprintf(wp, "type\tskeleton\n"); break;
     }
+    const char *path = tcadbpath(adb);
+    if(path) wp += sprintf(wp, "path\t%s\n", path);
     wp += sprintf(wp, "rnum\t%llu\n", (unsigned long long)tcadbrnum(adb));
     wp += sprintf(wp, "size\t%llu\n", (unsigned long long)tcadbsize(adb));
     wp += sprintf(wp, "bigend\t%d\n", TTBIGEND);
@@ -1909,6 +2062,14 @@ static void do_stat(TTSOCK *sock, TASKARG *arg, TTREQ *req){
     }
     wp += sprintf(wp, "fd\t%d\n", sock->fd);
     wp += sprintf(wp, "loadavg\t%.6f\n", ttgetloadavg());
+    TCMAP *info = tcsysinfo();
+    if(info){
+      const char *vbuf = tcmapget2(info, "size");
+      if(vbuf) wp += sprintf(wp, "memsize\t%s\n", vbuf);
+      vbuf = tcmapget2(info, "rss");
+      if(vbuf) wp += sprintf(wp, "memrss\t%s\n", vbuf);
+      tcmapdel(info);
+    }
     wp += sprintf(wp, "ru_real\t%.6f\n", now - g_starttime);
     struct rusage ubuf;
     memset(&ubuf, 0, sizeof(ubuf));
@@ -1974,7 +2135,7 @@ static void do_misc(TTSOCK *sock, TASKARG *arg, TTREQ *req){
       ttservlog(g_serv, TTLOGINFO, "do_misc: forbidden");
     } else {
       TCLIST *res = (opts & RDBMONOULOG) ?
-        tcadbmisc(adb, name, args) : tculogadbmisc(ulog, sid, adb, name, args);
+        tcadbmisc(adb, name, args) : tculogadbmisc(ulog, sid, 0, adb, name, args);
       if(res){
         for(int i = 0; i < tclistnum(res); i++){
           int esiz;
@@ -1990,7 +2151,7 @@ static void do_misc(TTSOCK *sock, TASKARG *arg, TTREQ *req){
       }
     }
     num = TTHTONL((uint32_t)rnum);
-    *(uint32_t *)((char *)tcxstrptr(xstr) + sizeof(code)) = num;
+    memcpy((char *)tcxstrptr(xstr) + sizeof(code), &num, sizeof(num));
     if(ttsocksend(sock, tcxstrptr(xstr), tcxstrsize(xstr))){
       req->keep = true;
     } else {
@@ -2010,8 +2171,8 @@ static void do_repl(TTSOCK *sock, TASKARG *arg, TTREQ *req){
   uint64_t mask = arg->mask;
   TCULOG *ulog = arg->ulog;
   uint64_t ts = ttsockgetint64(sock);
-  uint64_t sid = ttsockgetint32(sock);
-  if(ttsockcheckend(sock)){
+  uint32_t sid = ttsockgetint32(sock);
+  if(ttsockcheckend(sock) || ts < 1 || sid < 1){
     ttservlog(g_serv, TTLOGINFO, "do_repl: invalid parameters");
     return;
   }
@@ -2019,31 +2180,56 @@ static void do_repl(TTSOCK *sock, TASKARG *arg, TTREQ *req){
     ttservlog(g_serv, TTLOGINFO, "do_repl: forbidden");
     return;
   }
+  if(sid == arg->sid){
+    ttservlog(g_serv, TTLOGINFO, "do_repl: rejected circular replication");
+    return;
+  }
+  uint32_t lnum = TTHTONL(arg->sid);
+  if(!ttsocksend(sock, &lnum, sizeof(lnum))){
+    ttservlog(g_serv, TTLOGINFO, "do_repl: response failed");
+    return;
+  }
   TCULRD *ulrd = tculrdnew(ulog, ts);
   if(ulrd){
+    ttservlog(g_serv, TTLOGINFO, "replicating to sid=%u after %llu",
+              (unsigned int)sid, (unsigned long long)ts - 1);
     pthread_cleanup_push((void (*)(void *))tculrddel, ulrd);
     bool err = false;
-    bool idle = true;
-    const char *rbuf;
-    int rsiz;
-    uint64_t rts;
-    uint32_t rsid;
+    double noptime = 0;
     char stack[TTIOBUFSIZ];
     while(!err && !ttserviskilled(g_serv)){
       ttsocksetlife(sock, UINT_MAX);
-      req->mtime = tctime() + UINT_MAX;
-      if(idle){
+      double now = tctime();
+      req->mtime = now + UINT_MAX;
+      if(now - noptime >= 1.0){
         *(unsigned char *)stack = TCULMAGICNOP;
         if(!ttsocksend(sock, stack, sizeof(uint8_t))){
           err = true;
           ttservlog(g_serv, TTLOGINFO, "do_repl: connection closed");
         }
+        noptime = now;
       }
       tculrdwait(ulrd);
-      idle = true;
-      while(!err && (rbuf = tculrdread(ulrd, &rsiz, &rts, &rsid)) != NULL){
-        idle = false;
-        if(rsid == sid) continue;
+      uint32_t nopcnt = 0;
+      const char *rbuf;
+      int rsiz;
+      uint64_t rts;
+      uint32_t rsid, rmid;
+      while(!err && (rbuf = tculrdread(ulrd, &rsiz, &rts, &rsid, &rmid)) != NULL){
+        if(rsid == sid || rmid == sid){
+          if((nopcnt++ & 0xff) == 0){
+            now = tctime();
+            if(now - noptime >= 1.0){
+              *(unsigned char *)stack = TCULMAGICNOP;
+              if(!ttsocksend(sock, stack, sizeof(uint8_t))){
+                err = true;
+                ttservlog(g_serv, TTLOGINFO, "do_repl: connection closed");
+              }
+              noptime = now;
+            }
+          }
+          continue;
+        }
         int msiz = sizeof(uint8_t) + sizeof(uint64_t) + sizeof(uint32_t) * 2 + rsiz;
         char *mbuf = (msiz < TTIOBUFSIZ) ? stack : tcmalloc(msiz);
         pthread_cleanup_push(free, (mbuf == stack) ? NULL : mbuf);
@@ -2052,7 +2238,7 @@ static void do_repl(TTSOCK *sock, TASKARG *arg, TTREQ *req){
         uint64_t llnum = TTHTONLL(rts);
         memcpy(wp, &llnum, sizeof(llnum));
         wp += sizeof(llnum);
-        uint32_t lnum = TTHTONL(rsid);
+        lnum = TTHTONL(rsid);
         memcpy(wp, &lnum, sizeof(lnum));
         wp += sizeof(lnum);
         lnum = TTHTONL(rsiz);
@@ -2097,7 +2283,7 @@ static void do_mc_set(TTSOCK *sock, TASKARG *arg, TTREQ *req, char **tokens, int
     if(mask & (TTMSKPUT | TTMSKALLMC | TTMSKALLWRITE)){
       len = sprintf(stack, "CLIENT_ERROR forbidden\r\n");
       ttservlog(g_serv, TTLOGINFO, "do_mc_set: forbidden");
-    } else if(tculogadbput(ulog, sid, adb, kbuf, ksiz, vbuf, vsiz)){
+    } else if(tculogadbput(ulog, sid, 0, adb, kbuf, ksiz, vbuf, vsiz)){
       len = sprintf(stack, "STORED\r\n");
     } else {
       len = sprintf(stack, "SERVER_ERROR unexpected\r\n");
@@ -2139,7 +2325,7 @@ static void do_mc_add(TTSOCK *sock, TASKARG *arg, TTREQ *req, char **tokens, int
     if(mask & (TTMSKPUTKEEP | TTMSKALLMC | TTMSKALLWRITE)){
       len = sprintf(stack, "CLIENT_ERROR forbidden\r\n");
       ttservlog(g_serv, TTLOGINFO, "do_mc_add: forbidden");
-    } else if(tculogadbputkeep(ulog, sid, adb, kbuf, ksiz, vbuf, vsiz)){
+    } else if(tculogadbputkeep(ulog, sid, 0, adb, kbuf, ksiz, vbuf, vsiz)){
       len = sprintf(stack, "STORED\r\n");
     } else {
       len = sprintf(stack, "NOT_STORED\r\n");
@@ -2181,7 +2367,7 @@ static void do_mc_replace(TTSOCK *sock, TASKARG *arg, TTREQ *req, char **tokens,
       len = sprintf(stack, "CLIENT_ERROR forbidden\r\n");
       ttservlog(g_serv, TTLOGINFO, "do_mc_replace: forbidden");
     } else if(tcadbvsiz(adb, kbuf, ksiz) >= 0 &&
-              tculogadbput(ulog, sid, adb, kbuf, ksiz, vbuf, vsiz)){
+              tculogadbput(ulog, sid, 0, adb, kbuf, ksiz, vbuf, vsiz)){
       len = sprintf(stack, "STORED\r\n");
     } else {
       len = sprintf(stack, "NOT_STORED\r\n");
@@ -2258,7 +2444,7 @@ static void do_mc_delete(TTSOCK *sock, TASKARG *arg, TTREQ *req, char **tokens, 
   if(mask & (TTMSKOUT | TTMSKALLMC | TTMSKALLWRITE)){
     len = sprintf(stack, "CLIENT_ERROR forbidden\r\n");
     ttservlog(g_serv, TTLOGINFO, "do_mc_delete: forbidden");
-  } else if(tculogadbout(ulog, sid, adb, kbuf, ksiz)){
+  } else if(tculogadbout(ulog, sid, 0, adb, kbuf, ksiz)){
     len = sprintf(stack, "DELETED\r\n");
   } else {
     len = sprintf(stack, "NOT_FOUND\r\n");
@@ -2286,7 +2472,7 @@ static void do_mc_incr(TTSOCK *sock, TASKARG *arg, TTREQ *req, char **tokens, in
   bool nr = tnum > 3 && !strcmp(tokens[3], "noreply");
   const char *kbuf = tokens[1];
   int ksiz = strlen(kbuf);
-  int64_t num = strtoll(tokens[2], NULL, 10);
+  int64_t num = tcatoi(tokens[2]);
   int mtxidx = recmtxidx(kbuf, ksiz);
   char stack[TTIOBUFSIZ];
   int len;
@@ -2302,10 +2488,10 @@ static void do_mc_incr(TTSOCK *sock, TASKARG *arg, TTREQ *req, char **tokens, in
     int vsiz;
     char *vbuf = tcadbget(adb, kbuf, ksiz, &vsiz);
     if(vbuf){
-      num += strtoll(vbuf, NULL, 10);
+      num += tcatoi(vbuf);
       if(num < 0) num = 0;
       len = sprintf(stack, "%lld", (long long)num);
-      if(tculogadbput(ulog, sid, adb, kbuf, ksiz, stack, len)){
+      if(tculogadbput(ulog, sid, 0, adb, kbuf, ksiz, stack, len)){
         len = sprintf(stack, "%lld\r\n", (long long)num);
       } else {
         len = sprintf(stack, "SERVER_ERROR unexpected\r\n");
@@ -2341,7 +2527,7 @@ static void do_mc_decr(TTSOCK *sock, TASKARG *arg, TTREQ *req, char **tokens, in
   bool nr = tnum > 3 && !strcmp(tokens[3], "noreply");
   const char *kbuf = tokens[1];
   int ksiz = strlen(kbuf);
-  int64_t num = strtoll(tokens[2], NULL, 10) * -1;
+  int64_t num = tcatoi(tokens[2]) * -1;
   int mtxidx = recmtxidx(kbuf, ksiz);
   char stack[TTIOBUFSIZ];
   int len;
@@ -2357,10 +2543,10 @@ static void do_mc_decr(TTSOCK *sock, TASKARG *arg, TTREQ *req, char **tokens, in
     int vsiz;
     char *vbuf = tcadbget(adb, kbuf, ksiz, &vsiz);
     if(vbuf){
-      num += strtoll(vbuf, NULL, 10);
+      num += tcatoi(vbuf);
       if(num < 0) num = 0;
       len = sprintf(stack, "%lld", (long long)num);
-      if(tculogadbput(ulog, sid, adb, kbuf, ksiz, stack, len)){
+      if(tculogadbput(ulog, sid, 0, adb, kbuf, ksiz, stack, len)){
         len = sprintf(stack, "%lld\r\n", (long long)num);
       } else {
         len = sprintf(stack, "SERVER_ERROR unexpected\r\n");
@@ -2418,7 +2604,7 @@ static void do_mc_stats(TTSOCK *sock, TASKARG *arg, TTREQ *req, char **tokens, i
 
 /* handle the memcached flush_all command */
 static void do_mc_flushall(TTSOCK *sock, TASKARG *arg, TTREQ *req, char **tokens, int tnum){
-  ttservlog(g_serv, TTLOGDEBUG, "doing mc_flushall command");
+  ttservlog(g_serv, TTLOGINFO, "doing mc_flushall command");
   uint64_t mask = arg->mask;
   TCADB *adb = arg->adb;
   TCULOG *ulog = arg->ulog;
@@ -2430,7 +2616,7 @@ static void do_mc_flushall(TTSOCK *sock, TASKARG *arg, TTREQ *req, char **tokens
   if(mask & (TTMSKVANISH | TTMSKALLMC | TTMSKALLWRITE)){
     len = sprintf(stack, "CLIENT_ERROR forbidden\r\n");
     ttservlog(g_serv, TTLOGINFO, "do_mc_flushall: forbidden");
-  } else if(tculogadbvanish(ulog, sid, adb)){
+  } else if(tculogadbvanish(ulog, sid, 0, adb)){
     len = sprintf(stack, "OK\r\n");
   } else {
     len = sprintf(stack, "SERVER_ERROR unexpected\r\n");
@@ -2640,7 +2826,7 @@ static void do_http_put(TTSOCK *sock, TASKARG *arg, TTREQ *req, int ver, const c
     } else {
       switch(pdmode){
       case 1:
-        if(tculogadbputkeep(ulog, sid, adb, kbuf, ksiz, vbuf, vsiz)){
+        if(tculogadbputkeep(ulog, sid, 0, adb, kbuf, ksiz, vbuf, vsiz)){
           int len = sprintf(line, "Created\n");
           tcxstrprintf(xstr, "HTTP/1.1 201 Created\r\n");
           tcxstrprintf(xstr, "Content-Type: text/plain\r\n");
@@ -2657,7 +2843,7 @@ static void do_http_put(TTSOCK *sock, TASKARG *arg, TTREQ *req, int ver, const c
         }
         break;
       case 2:
-        if(tculogadbputcat(ulog, sid, adb, kbuf, ksiz, vbuf, vsiz)){
+        if(tculogadbputcat(ulog, sid, 0, adb, kbuf, ksiz, vbuf, vsiz)){
           int len = sprintf(line, "Created\n");
           tcxstrprintf(xstr, "HTTP/1.1 201 Created\r\n");
           tcxstrprintf(xstr, "Content-Type: text/plain\r\n");
@@ -2675,7 +2861,7 @@ static void do_http_put(TTSOCK *sock, TASKARG *arg, TTREQ *req, int ver, const c
         }
         break;
       default:
-        if(tculogadbput(ulog, sid, adb, kbuf, ksiz, vbuf, vsiz)){
+        if(tculogadbput(ulog, sid, 0, adb, kbuf, ksiz, vbuf, vsiz)){
           int len = sprintf(line, "Created\n");
           tcxstrprintf(xstr, "HTTP/1.1 201 Created\r\n");
           tcxstrprintf(xstr, "Content-Type: text/plain\r\n");
@@ -2864,7 +3050,7 @@ static void do_http_delete(TTSOCK *sock, TASKARG *arg, TTREQ *req, int ver, cons
     tcxstrcat(xstr, line, len);
     ttservlog(g_serv, TTLOGINFO, "do_http_delete: forbidden");
   } else {
-    if(tculogadbout(ulog, sid, adb, kbuf, ksiz)){
+    if(tculogadbout(ulog, sid, 0, adb, kbuf, ksiz)){
       int len = sprintf(line, "OK\n");
       tcxstrprintf(xstr, "HTTP/1.1 200 OK\r\n");
       tcxstrprintf(xstr, "Content-Type: text/plain\r\n");
@@ -2887,6 +3073,145 @@ static void do_http_delete(TTSOCK *sock, TASKARG *arg, TTREQ *req, int ver, cons
   }
   pthread_cleanup_pop(1);
   pthread_cleanup_pop(1);
+}
+
+
+/* handle the HTTP OPTIONS command */
+static void do_http_options(TTSOCK *sock, TASKARG *arg, TTREQ *req, int ver, const char *uri){
+  ttservlog(g_serv, TTLOGDEBUG, "doing http_options command");
+  uint64_t mask = arg->mask;
+  TCADB *adb = arg->adb;
+  REPLARG *sarg = arg->sarg;
+  bool keep = ver >= 1;
+  char line[LINEBUFSIZ];
+  while(ttsockgets(sock, line, LINEBUFSIZ) && *line != '\0'){
+    char *pv = strchr(line, ':');
+    if(!pv) continue;
+    *(pv++) = '\0';
+    while(*pv == ' ' || *pv == '\t'){
+      pv++;
+    }
+    if(!tcstricmp(line, "connection")){
+      if(!tcstricmp(pv, "close")){
+        keep = false;
+      } else if(!tcstricmp(pv, "keep-alive")){
+        keep = true;
+      }
+    }
+  }
+  TCXSTR *xstr = tcxstrnew();
+  pthread_cleanup_push((void (*)(void *))tcxstrdel, xstr);
+  if(mask & (TTMSKSTAT | TTMSKALLORG | TTMSKALLREAD)){
+    int len = sprintf(line, "Forbidden\n");
+    tcxstrprintf(xstr, "HTTP/1.1 403 Forbidden\r\n");
+    tcxstrprintf(xstr, "Content-Type: text/plain\r\n");
+    tcxstrprintf(xstr, "Content-Length: %d\r\n", len);
+    tcxstrprintf(xstr, "\r\n");
+    tcxstrcat(xstr, line, len);
+    ttservlog(g_serv, TTLOGINFO, "do_http_options: forbidden");
+  } else {
+    double now = tctime();
+    tcxstrprintf(xstr, "HTTP/1.1 200 OK\r\n");
+    tcxstrprintf(xstr, "Content-Length: 0\r\n");
+    tcxstrprintf(xstr, "Allow: OPTIONS");
+    if(!(mask & (TTMSKGET | TTMSKALLREAD))) tcxstrprintf(xstr, ", GET");
+    if(!(mask & (TTMSKVSIZ | TTMSKALLREAD))) tcxstrprintf(xstr, ", HEAD");
+    if(!(mask & (TTMSKPUT | TTMSKALLWRITE))) tcxstrprintf(xstr, ", PUT");
+    if(!(mask & (TTMSKEXT | TTMSKALLWRITE))) tcxstrprintf(xstr, ", POST");
+    if(!(mask & (TTMSKOUT | TTMSKALLWRITE))) tcxstrprintf(xstr, ", DELETE");
+    tcxstrprintf(xstr, "\r\n");
+    tcxstrprintf(xstr, "X-TT-VERSION: %s\r\n", ttversion);
+    tcxstrprintf(xstr, "X-TT-LIBVER: %d\r\n", _TT_LIBVER);
+    tcxstrprintf(xstr, "X-TT-PROTVER: %s\r\n", _TT_PROTVER);
+    tcxstrprintf(xstr, "X-TT-OS: %s\r\n", TTSYSNAME);
+    tcxstrprintf(xstr, "X-TT-TIME: %.6f\r\n", now);
+    tcxstrprintf(xstr, "X-TT-PID: %lld\r\n", (long long)getpid());
+    tcxstrprintf(xstr, "X-TT-SID: %d\r\n", arg->sid);
+    switch(tcadbomode(adb)){
+    case ADBOVOID: tcxstrprintf(xstr, "X-TT-TYPE: void\r\n"); break;
+    case ADBOMDB: tcxstrprintf(xstr, "X-TT-TYPE: on-memory hash\r\n"); break;
+    case ADBONDB: tcxstrprintf(xstr, "X-TT-TYPE: on-memory tree\r\n"); break;
+    case ADBOHDB: tcxstrprintf(xstr, "X-TT-TYPE: hash\r\n"); break;
+    case ADBOBDB: tcxstrprintf(xstr, "X-TT-TYPE: B+ tree\r\n"); break;
+    case ADBOFDB: tcxstrprintf(xstr, "X-TT-TYPE: fixed-length\r\n"); break;
+    case ADBOTDB: tcxstrprintf(xstr, "X-TT-TYPE: table\r\n"); break;
+    case ADBOSKEL: tcxstrprintf(xstr, "X-TT-TYPE: skeleton\r\n"); break;
+    }
+    const char *path = tcadbpath(adb);
+    if(path) tcxstrprintf(xstr, "X-TT-PATH: %s\r\n", path);
+    tcxstrprintf(xstr, "X-TT-RNUM: %llu\r\n", (unsigned long long)tcadbrnum(adb));
+    tcxstrprintf(xstr, "X-TT-SIZE: %llu\r\n", (unsigned long long)tcadbsize(adb));
+    tcxstrprintf(xstr, "X-TT-BIGEND: %d\r\n", TTBIGEND);
+    if(sarg->host[0] != '\0'){
+      tcxstrprintf(xstr, "X-TT-MHOST: %s\r\n", sarg->host);
+      tcxstrprintf(xstr, "X-TT-MPORT: %d\r\n", sarg->port);
+      tcxstrprintf(xstr, "X-TT-RTS: %llu\r\n", (unsigned long long)sarg->rts);
+      double delay = now - sarg->rts / 1000000.0;
+      tcxstrprintf(xstr, "X-TT-DELAY: %.6f\r\n", delay >= 0 ? delay : 0.0);
+    }
+    tcxstrprintf(xstr, "X-TT-FD: %d\r\n", sock->fd);
+    tcxstrprintf(xstr, "X-TT-LOADAVG: %.6f\r\n", ttgetloadavg());
+    TCMAP *info = tcsysinfo();
+    if(info){
+      const char *vbuf = tcmapget2(info, "size");
+      if(vbuf) tcxstrprintf(xstr, "X-TT-MEMSIZE: %s\r\n", vbuf);
+      vbuf = tcmapget2(info, "rss");
+      if(vbuf) tcxstrprintf(xstr, "X-TT-MEMRSS: %s\r\n", vbuf);
+      tcmapdel(info);
+    }
+    tcxstrprintf(xstr, "X-TT-RU_REAL: %.6f\r\n", now - g_starttime);
+    struct rusage ubuf;
+    memset(&ubuf, 0, sizeof(ubuf));
+    if(getrusage(RUSAGE_SELF, &ubuf) == 0){
+      tcxstrprintf(xstr, "X-TT-RU_USER: %d.%06d\r\n",
+                   (int)ubuf.ru_utime.tv_sec, (int)ubuf.ru_utime.tv_usec);
+      tcxstrprintf(xstr, "X-TT-RU_SYS: %d.%06d\r\n",
+                   (int)ubuf.ru_stime.tv_sec, (int)ubuf.ru_stime.tv_usec);
+    }
+    tcxstrprintf(xstr, "\r\n");
+  }
+  if(ttsocksend(sock, tcxstrptr(xstr), tcxstrsize(xstr))){
+    req->keep = keep;
+  } else {
+    ttservlog(g_serv, TTLOGINFO, "do_http_options: response failed");
+  }
+  pthread_cleanup_pop(1);
+}
+
+
+/* handle the termination event */
+static void do_term(void *opq){
+  TERMARG *arg = (TERMARG *)opq;
+  int thnum = arg->thnum;
+  TCADB *adb = arg->adb;
+  REPLARG *sarg = arg->sarg;
+  void **screxts = arg->screxts;
+  EXTPCARG *pcargs = arg->pcargs;
+  int pcnum = arg->pcnum;
+  if(sarg->host[0] != '\0') tcsleep(REPLPERIOD * 1.2);
+  if(g_restart) return;
+  if(pcargs){
+    for(int i = 0; i < pcnum; i++){
+      EXTPCARG *pcarg = pcargs + i;
+      if(!pcarg->scrext) continue;
+      if(!scrextkill(pcarg->scrext)){
+        arg->err = true;
+        ttservlog(g_serv, TTLOGERROR, "scrextkill failed");
+      }
+    }
+  }
+  for(int i = 0; i < thnum; i++){
+    if(!screxts[i]) continue;
+    if(!scrextkill(screxts[i])){
+      arg->err = true;
+      ttservlog(g_serv, TTLOGERROR, "scrextkill failed");
+    }
+  }
+  ttservlog(g_serv, TTLOGSYSTEM, "closing the database");
+  if(!tcadbclose(adb)){
+    arg->err = true;
+    ttservlog(g_serv, TTLOGERROR, "tcadbclose failed");
+  }
 }
 
 

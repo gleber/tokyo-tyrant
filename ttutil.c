@@ -75,7 +75,6 @@ bool ttgethostaddr(const char *name, char *addr){
   }
   if(getnameinfo(result->ai_addr, result->ai_addrlen,
                  addr, TTADDRBUFSIZ, NULL, 0, NI_NUMERICHOST) != 0){
-
     freeaddrinfo(result);
     return false;
   }
@@ -301,8 +300,14 @@ bool ttsocksend(TTSOCK *sock, const void *buf, int size){
     pthread_setcancelstate(ocs, NULL);
     switch(wb){
     case -1:
-      if(errno != EINTR && errno != EAGAIN && errno != EWOULDBLOCK) return false;
-      if(tctime() > sock->dl) return false;
+      if(errno != EINTR && errno != EAGAIN && errno != EWOULDBLOCK){
+        sock->end = true;
+        return false;
+      }
+      if(tctime() > sock->dl){
+        sock->end = true;
+        return false;
+      }
       break;
     case 0:
       break;
@@ -671,7 +676,7 @@ int tthttpfetch(const char *url, TCMAP *reqheads, TCMAP *resheads, TCXSTR *resbo
                 if(!ttsockgets(sock, line, SOCKLINEBUFSIZ)) err = true;
                 pthread_cleanup_pop(0);
                 if(err || *line == '\0') break;
-                int size = strtol(line, NULL, 16);
+                int size = tcatoih(line);
                 if(bsiz + size > HTTPBODYMAXSIZ){
                   err = true;
                   break;
@@ -794,8 +799,8 @@ double ttunpackdouble(const char *buf){
 #define TTADDRBUFSIZ   1024              // size of an address buffer
 #define TTDEFTHNUM     5                 // default number of threads
 #define TTEVENTMAX     256               // maximum number of events
-#define TTWAITREQUEST  200               // waiting milliseconds for requests
-#define TTWAITWORKER   100               // waiting milliseconds for finish of workers
+#define TTWAITREQUEST  0.2               // waiting seconds for requests
+#define TTWAITWORKER   0.1               // waiting seconds for finish of workers
 
 
 /* private function prototypes */
@@ -823,6 +828,8 @@ TTSERV *ttservnew(void){
   serv->timernum = 0;
   serv->do_task = NULL;
   serv->opq_task = NULL;
+  serv->do_term = NULL;
+  serv->opq_term = NULL;
   return serv;
 }
 
@@ -898,6 +905,14 @@ void ttservsettaskhandler(TTSERV *serv, void (*do_task)(TTSOCK *, void *, TTREQ 
 }
 
 
+/* Set the termination handler of a server object. */
+void ttservsettermhandler(TTSERV *serv, void (*do_term)(void *), void *opq){
+  assert(serv && do_term);
+  serv->do_term = do_term;
+  serv->opq_term = opq;
+}
+
+
 /* Start the service of a server object. */
 bool ttservstart(TTSERV *serv){
   assert(serv);
@@ -963,7 +978,7 @@ bool ttservstart(TTSERV *serv){
   ttservlog(serv, TTLOGSYSTEM, "listening started");
   while(!serv->term){
     struct epoll_event events[TTEVENTMAX];
-    int fdnum = epoll_wait(epfd, events, TTEVENTMAX, TTWAITREQUEST);
+    int fdnum = epoll_wait(epfd, events, TTEVENTMAX, TTWAITREQUEST * 1000);
     if(fdnum != -1){
       for(int i = 0; i < fdnum; i++){
         if(events[i].data.fd == lfd){
@@ -1026,7 +1041,7 @@ bool ttservstart(TTSERV *serv){
       double ctime = tctime();
       for(int i = 0; i < thnum; i++){
         double itime = ctime - reqs[i].mtime;
-        if(itime > serv->timeout + TTWAITREQUEST / 1000.0 + SOCKRCVTIMEO + SOCKSNDTIMEO &&
+        if(itime > serv->timeout + TTWAITREQUEST + SOCKRCVTIMEO + SOCKSNDTIMEO &&
            pthread_cancel(reqs[i].thid) == 0){
           ttservlog(serv, TTLOGINFO, "worker thread %d canceled by timeout", i + 1);
           void *rv;
@@ -1058,7 +1073,8 @@ bool ttservstart(TTSERV *serv){
     err = true;
     ttservlog(serv, TTLOGERROR, "pthread_cond_broadcast failed");
   }
-  usleep(TTWAITWORKER * 1000);
+  tcsleep(TTWAITWORKER);
+  if(serv->do_term) serv->do_term(serv->opq_term);
   for(int i = 0; i < thnum; i++){
     if(!reqs[i].alive) continue;
     if(pthread_cancel(reqs[i].thid) == 0)
@@ -1135,6 +1151,29 @@ bool ttserviskilled(TTSERV *serv){
 }
 
 
+/* Break a simple server expression. */
+char *ttbreakservexpr(const char *expr, int *pp){
+  assert(expr);
+  char *host = tcstrdup(expr);
+  char *pv = strchr(host, '#');
+  if(pv) *pv = '\0';
+  int port = -1;
+  pv = strchr(host, ':');
+  if(pv){
+    *(pv++) = '\0';
+    if(*pv >= '0' && *pv <= '9') port = tcatoi(pv);
+  }
+  if(port < 0) port = TTDEFPORT;
+  if(pp) *pp = port;
+  tcstrtrim(host);
+  if(*host == '\0'){
+    tcfree(host);
+    host = tcstrdup("127.0.0.1");
+  }
+  return host;
+}
+
+
 /* Call the timed function of a server object.
    `argp' specifies the argument structure of the server object.
    The return value is `NULL' on success and other on failure. */
@@ -1146,7 +1185,7 @@ static void *ttservtimer(void *argp){
     err = true;
     ttservlog(serv, TTLOGERROR, "pthread_setcancelstate failed");
   }
-  usleep(100000);
+  tcsleep(TTWAITWORKER);
   double freqi;
   double freqd = modf(timer->freq_timed, &freqi);
   while(!serv->term){
@@ -1155,7 +1194,7 @@ static void *ttservtimer(void *argp){
       struct timespec ts;
       if(gettimeofday(&tv, NULL) == 0){
         ts.tv_sec = tv.tv_sec + (int)freqi;
-        ts.tv_nsec = tv.tv_usec * 1000 + freqd * 1000000000;
+        ts.tv_nsec = tv.tv_usec * 1000.0 + freqd * 1000000000.0;
         if(ts.tv_nsec >= 1000000000){
           ts.tv_nsec -= 1000000000;
           ts.tv_sec++;
@@ -1171,7 +1210,7 @@ static void *ttservtimer(void *argp){
           ttservlog(serv, TTLOGERROR, "pthread_mutex_unlock failed");
           break;
         }
-        if(code != 0) timer->do_timed(timer->opq_timed);
+        if(code != 0 && !serv->term) timer->do_timed(timer->opq_timed);
       } else {
         pthread_mutex_unlock(&serv->tmtx);
         err = true;
@@ -1223,7 +1262,7 @@ static void *ttservdeqtasks(void *argp){
       struct timespec ts;
       if(gettimeofday(&tv, NULL) == 0){
         ts.tv_sec = tv.tv_sec;
-        ts.tv_nsec = tv.tv_usec * 1000 + TTWAITREQUEST * 1000000;
+        ts.tv_nsec = tv.tv_usec * 1000.0 + TTWAITREQUEST * 1000000000.0;
         if(ts.tv_nsec >= 1000000000){
           ts.tv_nsec -= 1000000000;
           ts.tv_sec++;
@@ -1353,6 +1392,50 @@ double ttgetloadavg(void){
   int anum = getloadavg(avgs, sizeof(avgs) / sizeof(*avgs));
   if(anum < 1) return 0.0;
   return anum == 1 ? avgs[0] : avgs[1];
+}
+
+
+/* Convert a string to a time stamp. */
+uint64_t ttstrtots(const char *str){
+  assert(str);
+  if(!tcstricmp(str, "now")) str = "-1";
+  int64_t ts = tcatoi(str);
+  if(ts < 0) ts = tctime() * 1000000;
+  return ts;
+}
+
+
+/* Get the command name of a command ID number. */
+const char *ttcmdidtostr(int id){
+  switch(id){
+  case TTCMDPUT: return "put";
+  case TTCMDPUTKEEP: return "putkeep";
+  case TTCMDPUTCAT: return "putcat";
+  case TTCMDPUTSHL: return "putshl";
+  case TTCMDPUTNR: return "putnr";
+  case TTCMDOUT: return "out";
+  case TTCMDGET: return "get";
+  case TTCMDMGET: return "mget";
+  case TTCMDVSIZ: return "vsiz";
+  case TTCMDITERINIT: return "iterinit";
+  case TTCMDITERNEXT: return "iternext";
+  case TTCMDFWMKEYS: return "fwmkeys";
+  case TTCMDADDINT: return "addint";
+  case TTCMDADDDOUBLE: return "adddouble";
+  case TTCMDEXT: return "ext";
+  case TTCMDSYNC: return "sync";
+  case TTCMDOPTIMIZE: return "optimize";
+  case TTCMDVANISH: return "vanish";
+  case TTCMDCOPY: return "copy";
+  case TTCMDRESTORE: return "restore";
+  case TTCMDSETMST: return "setmst";
+  case TTCMDRNUM: return "rnum";
+  case TTCMDSIZE: return "size";
+  case TTCMDSTAT: return "stat";
+  case TTCMDMISC: return "misc";
+  case TTCMDREPL: return "repl";
+  }
+  return "(unknown)";
 }
 
 

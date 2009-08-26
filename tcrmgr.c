@@ -18,7 +18,6 @@
 #include <tcrdb.h>
 #include "myconf.h"
 
-#define DEFPORT        1978              // default port
 #define REQHEADMAX     32                // maximum number of request headers of HTTP
 #define MINIBNUM       31                // bucket number of map for trivial use
 
@@ -34,8 +33,9 @@ static void printerr(TCRDB *rdb);
 static int sepstrtochr(const char *str);
 static char *strtozsv(const char *str, int sep, int *sp);
 static int printdata(const char *ptr, int size, bool px, int sep);
-static char *hextoobj(const char *str, int *sp);
 static char *mygetline(FILE *ifp);
+static bool myopen(TCRDB *rdb, const char *host, int port);
+static bool mysetmst(TCRDB *rdb, const char *host, int port, uint64_t ts, int opts);
 static int runinform(int argc, char **argv);
 static int runput(int argc, char **argv);
 static int runout(int argc, char **argv);
@@ -44,6 +44,7 @@ static int runmget(int argc, char **argv);
 static int runlist(int argc, char **argv);
 static int runext(int argc, char **argv);
 static int runsync(int argc, char **argv);
+static int runoptimize(int argc, char **argv);
 static int runvanish(int argc, char **argv);
 static int runcopy(int argc, char **argv);
 static int runmisc(int argc, char **argv);
@@ -66,13 +67,15 @@ static int procext(const char *host, int port, const char *func, int opts,
                    const char *kbuf, int ksiz, const char *vbuf, int vsiz, int sep,
                    bool px, bool pz);
 static int procsync(const char *host, int port);
+static int procoptimize(const char *host, int port, const char *params);
 static int procvanish(const char *host, int port);
 static int proccopy(const char *host, int port, const char *dpath);
 static int procmisc(const char *host, int port, const char *func, int opts,
                     const TCLIST *args, int sep, bool px);
 static int procimporttsv(const char *host, int port, const char *file, bool nr, bool sc);
-static int procrestore(const char *host, int port, const char *upath, uint64_t ts);
-static int procsetmst(const char *host, int port, const char *mhost, int mport);
+static int procrestore(const char *host, int port, const char *upath, uint64_t ts, int opts);
+static int procsetmst(const char *host, int port, const char *mhost, int mport,
+                      uint64_t ts, int opts);
 static int procrepl(const char *host, int port, uint64_t ts, uint32_t sid, bool ph);
 static int prochttp(const char *url, TCMAP *hmap, bool ih);
 static int procversion(void);
@@ -100,6 +103,8 @@ int main(int argc, char **argv){
     rv = runext(argc, argv);
   } else if(!strcmp(argv[1], "sync")){
     rv = runsync(argc, argv);
+  } else if(!strcmp(argv[1], "optimize")){
+    rv = runoptimize(argc, argv);
   } else if(!strcmp(argv[1], "vanish")){
     rv = runvanish(argc, argv);
   } else if(!strcmp(argv[1], "copy")){
@@ -141,13 +146,15 @@ static void usage(void){
   fprintf(stderr, "  %s ext [-port num] [-xlr|-xlg] [-sx] [-sep chr] [-px] host func"
           " [key [value]]\n", g_progname);
   fprintf(stderr, "  %s sync [-port num] host\n", g_progname);
+  fprintf(stderr, "  %s optimize [-port num] host [params]\n", g_progname);
   fprintf(stderr, "  %s vanish [-port num] host\n", g_progname);
   fprintf(stderr, "  %s copy [-port num] host dpath\n", g_progname);
   fprintf(stderr, "  %s misc [-port num] [-mnu] [-sx] [-sep chr] [-px] host func [arg...]\n",
           g_progname);
   fprintf(stderr, "  %s importtsv [-port num] [-nr] [-sc] host [file]\n", g_progname);
-  fprintf(stderr, "  %s restore [-port num] [-ts num] host upath\n", g_progname);
-  fprintf(stderr, "  %s setmst [-port num] [-mport num] host [mhost]\n", g_progname);
+  fprintf(stderr, "  %s restore [-port num] [-ts num] [-rcc] host upath\n", g_progname);
+  fprintf(stderr, "  %s setmst [-port num] [-mport num] [-ts num] [-rcc] host [mhost]\n",
+          g_progname);
   fprintf(stderr, "  %s repl [-port num] [-ts num] [-sid num] [-ph] host\n", g_progname);
   fprintf(stderr, "  %s http [-ah name value] [-ih] url\n", g_progname);
   fprintf(stderr, "  %s version\n", g_progname);
@@ -208,27 +215,6 @@ static int printdata(const char *ptr, int size, bool px, int sep){
 }
 
 
-/* create a binary object from a hexadecimal string */
-static char *hextoobj(const char *str, int *sp){
-  int len = strlen(str);
-  char *buf = tcmalloc(len + 1);
-  int j = 0;
-  for(int i = 0; i < len; i += 2){
-    while(strchr(" \n\r\t\f\v", str[i])){
-      i++;
-    }
-    char mbuf[3];
-    if((mbuf[0] = str[i]) == '\0') break;
-    if((mbuf[1] = str[i+1]) == '\0') break;
-    mbuf[2] = '\0';
-    buf[j++] = (char)strtol(mbuf, NULL, 16);
-  }
-  buf[j] = '\0';
-  *sp = j;
-  return buf;
-}
-
-
 /* read a line from a file descriptor */
 static char *mygetline(FILE *ifp){
   int len = 0;
@@ -256,10 +242,34 @@ static char *mygetline(FILE *ifp){
 }
 
 
+/* open the remote database */
+static bool myopen(TCRDB *rdb, const char *host, int port){
+  bool err = false;
+  if(strchr(host, ':') || strchr(host, '#')){
+    if(!tcrdbopen2(rdb, host)) err = true;
+  } else {
+    if(!tcrdbopen(rdb, host, port)) err = true;
+  }
+  return !err;
+}
+
+
+/* set the replication master */
+static bool mysetmst(TCRDB *rdb, const char *host, int port, uint64_t ts, int opts){
+  bool err = false;
+  if(strchr(host, ':')){
+    if(!tcrdbsetmst2(rdb, host, ts, opts)) err = true;
+  } else {
+    if(!tcrdbsetmst(rdb, host, port, ts, opts)) err = true;
+  }
+  return !err;
+}
+
+
 /* parse arguments of inform command */
 static int runinform(int argc, char **argv){
   char *host = NULL;
-  int port = DEFPORT;
+  int port = TTDEFPORT;
   bool st = false;
   for(int i = 2; i < argc; i++){
     if(!host && argv[i][0] == '-'){
@@ -288,7 +298,7 @@ static int runput(int argc, char **argv){
   char *host = NULL;
   char *key = NULL;
   char *value = NULL;
-  int port = DEFPORT;
+  int port = TTDEFPORT;
   int dmode = 0;
   bool sx = false;
   int sep = -1;
@@ -323,8 +333,8 @@ static int runput(int argc, char **argv){
   int ksiz, vsiz;
   char *kbuf, *vbuf;
   if(sx){
-    kbuf = hextoobj(key, &ksiz);
-    vbuf = hextoobj(value, &vsiz);
+    kbuf = tchexdecode(key, &ksiz);
+    vbuf = tchexdecode(value, &vsiz);
   } else if(sep > 0){
     kbuf = strtozsv(key, sep, &ksiz);
     vbuf = strtozsv(value, sep, &vsiz);
@@ -345,7 +355,7 @@ static int runput(int argc, char **argv){
 static int runout(int argc, char **argv){
   char *host = NULL;
   char *key = NULL;
-  int port = DEFPORT;
+  int port = TTDEFPORT;
   bool sx = false;
   int sep = -1;
   for(int i = 2; i < argc; i++){
@@ -373,7 +383,7 @@ static int runout(int argc, char **argv){
   int ksiz;
   char *kbuf;
   if(sx){
-    kbuf = hextoobj(key, &ksiz);
+    kbuf = tchexdecode(key, &ksiz);
   } else if(sep > 0){
     kbuf = strtozsv(key, sep, &ksiz);
   } else {
@@ -390,7 +400,7 @@ static int runout(int argc, char **argv){
 static int runget(int argc, char **argv){
   char *host = NULL;
   char *key = NULL;
-  int port = DEFPORT;
+  int port = TTDEFPORT;
   bool sx = false;
   int sep = -1;
   bool px = false;
@@ -424,7 +434,7 @@ static int runget(int argc, char **argv){
   int ksiz;
   char *kbuf;
   if(sx){
-    kbuf = hextoobj(key, &ksiz);
+    kbuf = tchexdecode(key, &ksiz);
   } else if(sep > 0){
     kbuf = strtozsv(key, sep, &ksiz);
   } else {
@@ -441,7 +451,7 @@ static int runget(int argc, char **argv){
 static int runmget(int argc, char **argv){
   char *host = NULL;
   TCLIST *keys = tcmpoollistnew(tcmpoolglobal());
-  int port = DEFPORT;
+  int port = TTDEFPORT;
   bool sx = false;
   int sep = -1;
   bool px = false;
@@ -470,7 +480,7 @@ static int runmget(int argc, char **argv){
   if(sx){
     for(int i = 0; i < tclistnum(keys); i++){
       int ksiz;
-      char *kbuf = hextoobj(tclistval2(keys, i), &ksiz);
+      char *kbuf = tchexdecode(tclistval2(keys, i), &ksiz);
       tclistover(keys, i, kbuf, ksiz);
       tcfree(kbuf);
     }
@@ -490,7 +500,7 @@ static int runmget(int argc, char **argv){
 /* parse arguments of list command */
 static int runlist(int argc, char **argv){
   char *host = NULL;
-  int port = DEFPORT;
+  int port = TTDEFPORT;
   int sep = -1;
   int max = -1;
   bool pv = false;
@@ -535,7 +545,7 @@ static int runext(int argc, char **argv){
   char *func = NULL;
   char *key = NULL;
   char *value = NULL;
-  int port = DEFPORT;
+  int port = TTDEFPORT;
   int opts = 0;
   bool sx = false;
   int sep = -1;
@@ -580,8 +590,8 @@ static int runext(int argc, char **argv){
   int ksiz, vsiz;
   char *kbuf, *vbuf;
   if(sx){
-    kbuf = hextoobj(key, &ksiz);
-    vbuf = hextoobj(value, &vsiz);
+    kbuf = tchexdecode(key, &ksiz);
+    vbuf = tchexdecode(value, &vsiz);
   } else if(sep > 0){
     kbuf = strtozsv(key, sep, &ksiz);
     vbuf = strtozsv(value, sep, &vsiz);
@@ -601,7 +611,7 @@ static int runext(int argc, char **argv){
 /* parse arguments of sync command */
 static int runsync(int argc, char **argv){
   char *host = NULL;
-  int port = DEFPORT;
+  int port = TTDEFPORT;
   for(int i = 2; i < argc; i++){
     if(!host && argv[i][0] == '-'){
       if(!strcmp(argv[i], "-port")){
@@ -622,10 +632,37 @@ static int runsync(int argc, char **argv){
 }
 
 
+/* parse arguments of optimize command */
+static int runoptimize(int argc, char **argv){
+  char *host = NULL;
+  char *params = NULL;
+  int port = TTDEFPORT;
+  for(int i = 2; i < argc; i++){
+    if(!host && argv[i][0] == '-'){
+      if(!strcmp(argv[i], "-port")){
+        if(++i >= argc) usage();
+        port = tcatoi(argv[i]);
+      } else {
+        usage();
+      }
+    } else if(!host){
+      host = argv[i];
+    } else if(!params){
+      params = argv[i];
+    } else {
+      usage();
+    }
+  }
+  if(!host) usage();
+  int rv = procoptimize(host, port, params);
+  return rv;
+}
+
+
 /* parse arguments of vanish command */
 static int runvanish(int argc, char **argv){
   char *host = NULL;
-  int port = DEFPORT;
+  int port = TTDEFPORT;
   for(int i = 2; i < argc; i++){
     if(!host && argv[i][0] == '-'){
       if(!strcmp(argv[i], "-port")){
@@ -650,7 +687,7 @@ static int runvanish(int argc, char **argv){
 static int runcopy(int argc, char **argv){
   char *host = NULL;
   char *dpath = NULL;
-  int port = DEFPORT;
+  int port = TTDEFPORT;
   for(int i = 2; i < argc; i++){
     if(!host && argv[i][0] == '-'){
       if(!strcmp(argv[i], "-port")){
@@ -678,7 +715,7 @@ static int runmisc(int argc, char **argv){
   char *host = NULL;
   char *func = NULL;
   TCLIST *args = tcmpoollistnew(tcmpoolglobal());
-  int port = DEFPORT;
+  int port = TTDEFPORT;
   int opts = 0;
   bool sx = false;
   int sep = -1;
@@ -707,7 +744,7 @@ static int runmisc(int argc, char **argv){
     } else {
       if(sx){
         int size;
-        char *buf = hextoobj(argv[i], &size);
+        char *buf = tchexdecode(argv[i], &size);
         tclistpush(args, buf, size);
         tcfree(buf);
       } else if(sep > 0){
@@ -730,7 +767,7 @@ static int runmisc(int argc, char **argv){
 static int runimporttsv(int argc, char **argv){
   char *host = NULL;
   char *file = NULL;
-  int port = DEFPORT;
+  int port = TTDEFPORT;
   bool nr = false;
   bool sc = false;
   for(int i = 2; i < argc; i++){
@@ -763,8 +800,9 @@ static int runimporttsv(int argc, char **argv){
 static int runrestore(int argc, char **argv){
   char *host = NULL;
   char *upath = NULL;
-  int port = DEFPORT;
+  int port = TTDEFPORT;
   uint64_t ts = 0;
+  int opts = 0;
   for(int i = 2; i < argc; i++){
     if(!host && argv[i][0] == '-'){
       if(!strcmp(argv[i], "-port")){
@@ -772,7 +810,9 @@ static int runrestore(int argc, char **argv){
         port = tcatoi(argv[i]);
       } else if(!strcmp(argv[i], "-ts")){
         if(++i >= argc) usage();
-        ts = strtoll(argv[i], NULL, 10);
+        ts = ttstrtots(argv[i]);
+      } else if(!strcmp(argv[i], "-rcc")){
+        opts |= RDBROCHKCON;
       } else {
         usage();
       }
@@ -785,7 +825,7 @@ static int runrestore(int argc, char **argv){
     }
   }
   if(!host || !upath) usage();
-  int rv = procrestore(host, port, upath, ts);
+  int rv = procrestore(host, port, upath, ts, opts);
   return rv;
 }
 
@@ -794,8 +834,10 @@ static int runrestore(int argc, char **argv){
 static int runsetmst(int argc, char **argv){
   char *host = NULL;
   char *mhost = NULL;
-  int port = DEFPORT;
-  int mport = DEFPORT;
+  int port = TTDEFPORT;
+  int mport = TTDEFPORT;
+  uint64_t ts = 0;
+  int opts = 0;
   for(int i = 2; i < argc; i++){
     if(!host && argv[i][0] == '-'){
       if(!strcmp(argv[i], "-port")){
@@ -804,6 +846,11 @@ static int runsetmst(int argc, char **argv){
       } else if(!strcmp(argv[i], "-mport")){
         if(++i >= argc) usage();
         mport = tcatoi(argv[i]);
+      } else if(!strcmp(argv[i], "-ts")){
+        if(++i >= argc) usage();
+        ts = ttstrtots(argv[i]);
+      } else if(!strcmp(argv[i], "-rcc")){
+        opts |= RDBROCHKCON;
       } else {
         usage();
       }
@@ -816,7 +863,7 @@ static int runsetmst(int argc, char **argv){
     }
   }
   if(!host) usage();
-  int rv = procsetmst(host, port, mhost, mport);
+  int rv = procsetmst(host, port, mhost, mport, ts, opts);
   return rv;
 }
 
@@ -824,7 +871,7 @@ static int runsetmst(int argc, char **argv){
 /* parse arguments of repl command */
 static int runrepl(int argc, char **argv){
   char *host = NULL;
-  int port = DEFPORT;
+  int port = TTDEFPORT;
   uint64_t ts = 0;
   uint32_t sid = 0;
   bool ph = false;
@@ -835,7 +882,7 @@ static int runrepl(int argc, char **argv){
         port = tcatoi(argv[i]);
       } else if(!strcmp(argv[i], "-ts")){
         if(++i >= argc) usage();
-        ts = strtoll(argv[i], NULL, 10);
+        ts = ttstrtots(argv[i]);
       } else if(!strcmp(argv[i], "-sid")){
         if(++i >= argc) usage();
         sid = tcatoi(argv[i]);
@@ -909,7 +956,7 @@ static int runversion(int argc, char **argv){
 /* perform inform command */
 static int procinform(const char *host, int port, bool st){
   TCRDB *rdb = tcrdbnew();
-  if(!tcrdbopen(rdb, host, port)){
+  if(!myopen(rdb, host, port)){
     printerr(rdb);
     tcrdbdel(rdb);
     return 1;
@@ -941,7 +988,7 @@ static int procinform(const char *host, int port, bool st){
 static int procput(const char *host, int port, const char *kbuf, int ksiz,
                    const char *vbuf, int vsiz, int dmode){
   TCRDB *rdb = tcrdbnew();
-  if(!tcrdbopen(rdb, host, port)){
+  if(!myopen(rdb, host, port)){
     printerr(rdb);
     tcrdbdel(rdb);
     return 1;
@@ -979,7 +1026,7 @@ static int procput(const char *host, int port, const char *kbuf, int ksiz,
 /* perform out command */
 static int procout(const char *host, int port, const char *kbuf, int ksiz){
   TCRDB *rdb = tcrdbnew();
-  if(!tcrdbopen(rdb, host, port)){
+  if(!myopen(rdb, host, port)){
     printerr(rdb);
     tcrdbdel(rdb);
     return 1;
@@ -1002,7 +1049,7 @@ static int procout(const char *host, int port, const char *kbuf, int ksiz){
 static int procget(const char *host, int port, const char *kbuf, int ksiz, int sep,
                    bool px, bool pz){
   TCRDB *rdb = tcrdbnew();
-  if(!tcrdbopen(rdb, host, port)){
+  if(!myopen(rdb, host, port)){
     printerr(rdb);
     tcrdbdel(rdb);
     return 1;
@@ -1030,7 +1077,7 @@ static int procget(const char *host, int port, const char *kbuf, int ksiz, int s
 /* perform mget command */
 static int procmget(const char *host, int port, const TCLIST *keys, int sep, bool px){
   TCRDB *rdb = tcrdbnew();
-  if(!tcrdbopen(rdb, host, port)){
+  if(!myopen(rdb, host, port)){
     printerr(rdb);
     tcrdbdel(rdb);
     return 1;
@@ -1072,7 +1119,7 @@ static int procmget(const char *host, int port, const TCLIST *keys, int sep, boo
 static int proclist(const char *host, int port, int sep, int max, bool pv, bool px,
                     const char *fmstr){
   TCRDB *rdb = tcrdbnew();
-  if(!tcrdbopen(rdb, host, port)){
+  if(!myopen(rdb, host, port)){
     printerr(rdb);
     tcrdbdel(rdb);
     return 1;
@@ -1134,7 +1181,7 @@ static int procext(const char *host, int port, const char *name, int opts,
                    const char *kbuf, int ksiz, const char *vbuf, int vsiz, int sep,
                    bool px, bool pz){
   TCRDB *rdb = tcrdbnew();
-  if(!tcrdbopen(rdb, host, port)){
+  if(!myopen(rdb, host, port)){
     printerr(rdb);
     tcrdbdel(rdb);
     return 1;
@@ -1162,7 +1209,7 @@ static int procext(const char *host, int port, const char *name, int opts,
 /* perform sync command */
 static int procsync(const char *host, int port){
   TCRDB *rdb = tcrdbnew();
-  if(!tcrdbopen(rdb, host, port)){
+  if(!myopen(rdb, host, port)){
     printerr(rdb);
     tcrdbdel(rdb);
     return 1;
@@ -1181,10 +1228,32 @@ static int procsync(const char *host, int port){
 }
 
 
+/* perform optimize command */
+static int procoptimize(const char *host, int port, const char *param){
+  TCRDB *rdb = tcrdbnew();
+  if(!myopen(rdb, host, port)){
+    printerr(rdb);
+    tcrdbdel(rdb);
+    return 1;
+  }
+  bool err = false;
+  if(!tcrdboptimize(rdb, param)){
+    printerr(rdb);
+    err = true;
+  }
+  if(!tcrdbclose(rdb)){
+    if(!err) printerr(rdb);
+    err = true;
+  }
+  tcrdbdel(rdb);
+  return err ? 1 : 0;
+}
+
+
 /* perform vanish command */
 static int procvanish(const char *host, int port){
   TCRDB *rdb = tcrdbnew();
-  if(!tcrdbopen(rdb, host, port)){
+  if(!myopen(rdb, host, port)){
     printerr(rdb);
     tcrdbdel(rdb);
     return 1;
@@ -1206,7 +1275,7 @@ static int procvanish(const char *host, int port){
 /* perform copy command */
 static int proccopy(const char *host, int port, const char *dpath){
   TCRDB *rdb = tcrdbnew();
-  if(!tcrdbopen(rdb, host, port)){
+  if(!myopen(rdb, host, port)){
     printerr(rdb);
     tcrdbdel(rdb);
     return 1;
@@ -1229,7 +1298,7 @@ static int proccopy(const char *host, int port, const char *dpath){
 static int procmisc(const char *host, int port, const char *func, int opts,
                     const TCLIST *args, int sep, bool px){
   TCRDB *rdb = tcrdbnew();
-  if(!tcrdbopen(rdb, host, port)){
+  if(!myopen(rdb, host, port)){
     printerr(rdb);
     tcrdbdel(rdb);
     return 1;
@@ -1265,7 +1334,7 @@ static int procimporttsv(const char *host, int port, const char *file, bool nr, 
     return 1;
   }
   TCRDB *rdb = tcrdbnew();
-  if(!tcrdbopen(rdb, host, port)){
+  if(!myopen(rdb, host, port)){
     printerr(rdb);
     tcrdbdel(rdb);
     if(ifp != stdin) fclose(ifp);
@@ -1313,15 +1382,15 @@ static int procimporttsv(const char *host, int port, const char *file, bool nr, 
 
 
 /* perform restore command */
-static int procrestore(const char *host, int port, const char *upath, uint64_t ts){
+static int procrestore(const char *host, int port, const char *upath, uint64_t ts, int opts){
   TCRDB *rdb = tcrdbnew();
-  if(!tcrdbopen(rdb, host, port)){
+  if(!myopen(rdb, host, port)){
     printerr(rdb);
     tcrdbdel(rdb);
     return 1;
   }
   bool err = false;
-  if(!tcrdbrestore(rdb, upath, ts)){
+  if(!tcrdbrestore(rdb, upath, ts, opts)){
     printerr(rdb);
     err = true;
   }
@@ -1335,15 +1404,16 @@ static int procrestore(const char *host, int port, const char *upath, uint64_t t
 
 
 /* perform setmst command */
-static int procsetmst(const char *host, int port, const char *mhost, int mport){
+static int procsetmst(const char *host, int port, const char *mhost, int mport,
+                      uint64_t ts, int opts){
   TCRDB *rdb = tcrdbnew();
-  if(!tcrdbopen(rdb, host, port)){
+  if(!myopen(rdb, host, port)){
     printerr(rdb);
     tcrdbdel(rdb);
     return 1;
   }
   bool err = false;
-  if(!tcrdbsetmst(rdb, mhost, mport)){
+  if(!mysetmst(rdb, mhost, mport, ts, opts)){
     printerr(rdb);
     err = true;
   }
@@ -1369,9 +1439,16 @@ static int procrepl(const char *host, int port, uint64_t ts, uint32_t sid, bool 
     while((rbuf = tcreplread(repl, &rsiz, &rts, &rsid)) != NULL){
       if(rsiz < 1) continue;
       if(ph){
-        printf("%llu\t%u\t", (unsigned long long)rts, (unsigned int)rsid);
-        printdata(rbuf, rsiz, true, -1);
-        putchar('\n');
+        printf("%llu\t%u:%u\t",
+               (unsigned long long)rts, (unsigned int)rsid, (unsigned int)repl->mid);
+        if(rsiz >= 2){
+          printf("%s\t", ttcmdidtostr(((unsigned char *)rbuf)[1]));
+          printdata(rbuf, rsiz, true, -1);
+          putchar('\n');
+        } else {
+          printf("[broken entry]\n");
+        }
+        fflush(stdout);
       } else {
         int msiz = sizeof(uint8_t) + sizeof(uint64_t) + sizeof(uint32_t) * 2 + rsiz;
         char *mbuf = (msiz < TTIOBUFSIZ) ? stack : tcmalloc(msiz);
@@ -1380,10 +1457,13 @@ static int procrepl(const char *host, int port, uint64_t ts, uint32_t sid, bool 
         uint64_t llnum = TTHTONLL(rts);
         memcpy(wp, &llnum, sizeof(llnum));
         wp += sizeof(llnum);
-        uint32_t lnum = TTHTONL(rsid);
-        memcpy(wp, &lnum, sizeof(lnum));
-        wp += sizeof(lnum);
-        lnum = TTHTONL(rsiz);
+        uint16_t snum = TTHTONS(rsid);
+        memcpy(wp, &snum, sizeof(snum));
+        wp += sizeof(snum);
+        snum = TTHTONS(repl->mid);
+        memcpy(wp, &snum, sizeof(snum));
+        wp += sizeof(snum);
+        uint32_t lnum = TTHTONL(rsiz);
         memcpy(wp, &lnum, sizeof(lnum));
         wp += sizeof(lnum);
         memcpy(wp, rbuf, rsiz);

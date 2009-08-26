@@ -1,6 +1,120 @@
+2009-07-18  Mikio Hirabayashi  <mikio@users.sourceforge.net>
+
+	* scrext.c (serv_bit): new function.
+
+	* tcrdb.c (tcrdbqryhint, tcrdbmetasearch): new functions.
+
+	- Release: 1.1.33
+
+2009-07-15  Mikio Hirabayashi  <mikio@users.sourceforge.net>
+
+	* ttserver.c (do_mget, do_fwmkeys, do_misc): alignment violations were cleared.
+
+	* tcrmttest.c (runtypical, proctypical, threadtypical): new functions.
+
+	- Release: 1.1.32
+
+2009-07-09  Mikio Hirabayashi  <mikio@users.sourceforge.net>
+
+	* tculog.c (tculogwrite, tculrdread): the master ID is now recorded.
+
+	* ttserver.c (main): the default value of the "-ulim" option was modified.
+
+	* ttserver.c (proc): update logging and replicaion are now forbidden without the SID.
+
+	* ttserver.c (do_repl): the NOP command is now throwed while circular replication.
+
+	- Release: 1.1.31
+
+2009-07-05  Mikio Hirabayashi  <mikio@users.sourceforge.net>
+
+	* scrext.c (scrextkill): new function.
+
+	* scrext.c (serv_lock, serv_unlock): lock mechanism was modified with TCMDB.
+
+	- Release: 1.1.30
+
+2009-05-28  Mikio Hirabayashi  <mikio@users.sourceforge.net>
+
+	* ttserver.c (do_http_options): new function.
+
+	* tcrtest.c (proctable): a test of full-text search was added.
+
+	- Release: 1.1.29
+
+2009-05-20  Mikio Hirabayashi  <mikio@users.sourceforge.net>
+
+	* ttserver.c (do_task): a potential bug of memory leak was fixed.
+
+	* tcrdb.c (tcrdbnew): a bug related to initialization was fixed.
+
+	* scrext.c (serv_fwmkeys, serv_regex): new functions.
+
+	- Release: 1.1.28
+
+2009-05-11  Mikio Hirabayashi  <mikio@users.sourceforge.net>
+
+	* tcrtest.c (runtable, proctable): "-exp" option was added.
+
+	* ttskelnull.c: new file.
+
+	* tokyotyrant.idl: new file.
+
+	- Release: 1.1.27
+
+2009-05-09  Mikio Hirabayashi  <mikio@users.sourceforge.net>
+
+	* ttutil.c (ttservsettermhandler): new function.
+
+	* ttserver.c (do_term): new function.
+
+	- Release: 1.1.26
+
+2009-05-06  Mikio Hirabayashi  <mikio@users.sourceforge.net>
+
+	* ttutil.c (ttcmdidtostr): new function.
+
+	* tculog.c (tcreplopen): a bug of data size of the server ID was fixed.
+
+	* tcrdb.c (tcrdbsetmst, tcrdbsetmst2): the timestamp argument was added.
+
+	* tcrmgr.c (procrepl): command names are now printed.
+
+	* ttulmgr.c (procexport): command names are now printed.
+
+	- Release: 1.1.25
+
+2009-04-25  Mikio Hirabayashi  <mikio@users.sourceforge.net>
+
+	* ttutil.c (ttbreakservexpr): new function.
+
+	* tcrdb.c (tcrdbopen2, tcrdbsetmst2, tcrdbtune): new functions.
+
+	* tcrdb.c (tcrdbsetecode, tcrdblockmethod, tcrdbunlockmethod): new functions.
+
+	* ttserver.c (proc): dynamic linking for the skeleton database was added.
+
+	* ttskelmock.c, ttskelproxy.c: new files.
+
+	- Release: 1.1.24
+
 2009-04-07  Mikio Hirabayashi  <mikio@users.sourceforge.net>
 
-	* scrext.c (serv_eval): new function.
+	* scrext.c (serv_eval, serv_split): new functions.
+
+	* ttserver.c (do_repl): efficiency on dual-master replication was improved.
+
+	* ttserver.c (do_optimize): new function.
+
+	* ttserver.c (do_log): message format was modified.
+
+	* tcrdb.c (tcrdboptimize): new function.
+
+	* tcrdb.c (tcrdbvanish, tcrdbcopy, tcrdbrestore): each magic number was drifted.
+
+	* tcrdb.c (tcrdbrestore, tcrdbsetmst): an argument for options was added.
+
+	* tculog.c (tculogadbredo): the flag of consistency checking was separated.
 
 	- Release: 1.1.23
 

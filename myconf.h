@@ -203,6 +203,7 @@
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <dlfcn.h>
 
 #include <pthread.h>
 

@@ -19,7 +19,7 @@ pidfile="$basedir/pid"
 #mport="1978"
 #rtsfile="$basedir/rts"
 dbname="$basedir/casket.tch#bnum=1000000"
-maxcon="65536"
+maxcon="65535"
 retval=0
 
 
@@ -33,7 +33,6 @@ export LANG LC_ALL PATH
 # start the server
 start(){
   printf 'Starting the server of Tokyo Tyrant\n'
-  ulimit -n "$maxcon"
   mkdir -p "$basedir"
   if [ -z "$basedir" ] || [ -z "$port" ] || [ -z "$pidfile" ] || [ -z "$dbname" ] ; then
     printf 'Invalid configuration\n'
@@ -46,6 +45,9 @@ start(){
     printf 'Existing process: %d\n' "$pid"
     retval=1
   else
+    if [ -n "$maxcon" ] ; then
+      ulimit -n "$maxcon" >/dev/null 2>&1
+    fi
     cmd="$cmd -port $port -dmn -pid $pidfile"
     if [ -n "$logfile" ] ; then
       cmd="$cmd -log $logfile"

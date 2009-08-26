@@ -17,7 +17,6 @@
 #include <tcrdb.h>
 #include "myconf.h"
 
-#define DEFPORT        1978              // default port
 #define RECBUFSIZ      32                // buffer for records
 
 typedef struct {                         // type of structure for write thread
@@ -44,6 +43,19 @@ typedef struct {                         // type of structure for remove thread
   int id;
 } TARGREMOVE;
 
+typedef struct {                         // type of structure for typical thread
+  TCRDB *rdb;
+  int rnum;
+  int id;
+} TARGTYPICAL;
+
+typedef struct {                         // type of structure for table thread
+  TCRDB *rdb;
+  int rnum;
+  bool rnd;
+  int id;
+} TARGTABLE;
+
 
 /* global variables */
 const char *g_progname;                  // program name
@@ -53,19 +65,26 @@ const char *g_progname;                  // program name
 int main(int argc, char **argv);
 static void usage(void);
 static void iprintf(const char *format, ...);
-static void eprint(TCRDB *rdb, const char *func);
+static void eprint(TCRDB *rdb, int line, const char *func);
 static int myrand(int range);
 static int myrandnd(int range);
+static bool myopen(TCRDB *rdb, const char *host, int port);
 static int runwrite(int argc, char **argv);
 static int runread(int argc, char **argv);
 static int runremove(int argc, char **argv);
+static int runtypical(int argc, char **argv);
+static int runtable(int argc, char **argv);
 static int procwrite(const char *host, int port, int tnum, int rnum,
                      bool nr, const char *ext, bool rnd);
 static int procread(const char *host, int port, int tnum, int mul, bool rnd);
 static int procremove(const char *host, int port, int tnum, bool rnd);
+static int proctypical(const char *host, int port, int tnum, int rnum);
+static int proctable(const char *host, int port, int tnum, int rnum, bool rnd);
 static void *threadwrite(void *targ);
 static void *threadread(void *targ);
 static void *threadremove(void *targ);
+static void *threadtypical(void *targ);
+static void *threadtable(void *targ);
 
 
 /* main routine */
@@ -80,6 +99,10 @@ int main(int argc, char **argv){
     rv = runread(argc, argv);
   } else if(!strcmp(argv[1], "remove")){
     rv = runremove(argc, argv);
+  } else if(!strcmp(argv[1], "typical")){
+    rv = runtypical(argc, argv);
+  } else if(!strcmp(argv[1], "table")){
+    rv = runtable(argc, argv);
   } else {
     usage();
   }
@@ -96,6 +119,8 @@ static void usage(void){
           g_progname);
   fprintf(stderr, "  %s read [-port num] [-tnum num] [-mul num] host\n", g_progname);
   fprintf(stderr, "  %s remove [-port num] [-tnum num] host\n", g_progname);
+  fprintf(stderr, "  %s typical [-port num] [-tnum num] host rnum\n", g_progname);
+  fprintf(stderr, "  %s table [-port num] [-tnum num] host rnum\n", g_progname);
   fprintf(stderr, "\n");
   exit(1);
 }
@@ -112,15 +137,20 @@ static void iprintf(const char *format, ...){
 
 
 /* print error message of abstract database */
-static void eprint(TCRDB *rdb, const char *func){
+static void eprint(TCRDB *rdb, int line, const char *func){
   int ecode = tcrdbecode(rdb);
-  fprintf(stderr, "%s: %s: error: %d: %s\n", g_progname, func, ecode, tcrdberrmsg(ecode));
+  fprintf(stderr, "%s: %d: %s: error: %d: %s\n",
+          g_progname, line, func, ecode, tcrdberrmsg(ecode));
 }
 
 
 /* get a random number */
 static int myrand(int range){
-  return (int)((double)range * rand() / (RAND_MAX + 1.0));
+  if(range < 2) return 0;
+  int high = (unsigned int)rand() >> 4;
+  int low = range * (rand() / (RAND_MAX + 1.0));
+  low &= (unsigned int)INT_MAX >> 4;
+  return (high + low) % range;
 }
 
 
@@ -131,11 +161,23 @@ static int myrandnd(int range){
 }
 
 
+/* open the remote database */
+static bool myopen(TCRDB *rdb, const char *host, int port){
+  bool err = false;
+  if(strchr(host, ':') || strchr(host, '#')){
+    if(!tcrdbopen2(rdb, host)) err = true;
+  } else {
+    if(!tcrdbopen(rdb, host, port)) err = true;
+  }
+  return !err;
+}
+
+
 /* parse arguments of write command */
 static int runwrite(int argc, char **argv){
   char *host = NULL;
   char *rstr = NULL;
-  int port = DEFPORT;
+  int port = TTDEFPORT;
   int tnum = 1;
   bool nr = false;
   char *ext = NULL;
@@ -177,7 +219,7 @@ static int runwrite(int argc, char **argv){
 /* parse arguments of read command */
 static int runread(int argc, char **argv){
   char *host = NULL;
-  int port = DEFPORT;
+  int port = TTDEFPORT;
   int tnum = 1;
   int mul = 0;
   bool rnd = false;
@@ -212,7 +254,7 @@ static int runread(int argc, char **argv){
 /* parse arguments of remove command */
 static int runremove(int argc, char **argv){
   char *host = NULL;
-  int port = DEFPORT;
+  int port = TTDEFPORT;
   int tnum = 1;
   bool rnd = false;
   for(int i = 2; i < argc; i++){
@@ -240,6 +282,75 @@ static int runremove(int argc, char **argv){
 }
 
 
+/* parse arguments of typical command */
+static int runtypical(int argc, char **argv){
+  char *host = NULL;
+  char *rstr = NULL;
+  int port = TTDEFPORT;
+  int tnum = 1;
+  for(int i = 2; i < argc; i++){
+    if(!host && argv[i][0] == '-'){
+      if(!strcmp(argv[i], "-port")){
+        if(++i >= argc) usage();
+        port = tcatoi(argv[i]);
+      } else if(!strcmp(argv[i], "-tnum")){
+        if(++i >= argc) usage();
+        tnum = tcatoi(argv[i]);
+      } else {
+        usage();
+      }
+    } else if(!host){
+      host = argv[i];
+    } else if(!rstr){
+      rstr = argv[i];
+    } else {
+      usage();
+    }
+  }
+  if(!host || !rstr || tnum < 1) usage();
+  int rnum = tcatoi(rstr);
+  if(rnum < 1) usage();
+  int rv = proctypical(host, port, tnum, rnum);
+  return rv;
+}
+
+
+/* parse arguments of table command */
+static int runtable(int argc, char **argv){
+  char *host = NULL;
+  char *rstr = NULL;
+  int port = TTDEFPORT;
+  int tnum = 1;
+  bool rnd = false;
+  for(int i = 2; i < argc; i++){
+    if(!host && argv[i][0] == '-'){
+      if(!strcmp(argv[i], "-port")){
+        if(++i >= argc) usage();
+        port = tcatoi(argv[i]);
+      } else if(!strcmp(argv[i], "-tnum")){
+        if(++i >= argc) usage();
+        tnum = tcatoi(argv[i]);
+      } else if(!strcmp(argv[i], "-rnd")){
+        rnd = true;
+      } else {
+        usage();
+      }
+    } else if(!host){
+      host = argv[i];
+    } else if(!rstr){
+      rstr = argv[i];
+    } else {
+      usage();
+    }
+  }
+  if(!host || !rstr || tnum < 1) usage();
+  int rnum = tcatoi(rstr);
+  if(rnum < 1) usage();
+  int rv = proctable(host, port, tnum, rnum, rnd);
+  return rv;
+}
+
+
 /* perform write command */
 static int procwrite(const char *host, int port, int tnum, int rnum,
                      bool nr, const char *ext, bool rnd){
@@ -250,8 +361,8 @@ static int procwrite(const char *host, int port, int tnum, int rnum,
   TCRDB *rdbs[tnum];
   for(int i = 0; i < tnum; i++){
     rdbs[i] = tcrdbnew();
-    if(!tcrdbopen(rdbs[i], host, port)){
-      eprint(rdbs[i], "tcrdbopen");
+    if(!myopen(rdbs[i], host, port)){
+      eprint(rdbs[i], __LINE__, "tcrdbopen");
       err = true;
     }
   }
@@ -275,7 +386,7 @@ static int procwrite(const char *host, int port, int tnum, int rnum,
       targs[i].rnd = rnd;
       targs[i].id = i;
       if(pthread_create(threads + i, NULL, threadwrite, targs + i) != 0){
-        eprint(rdb, "pthread_create");
+        eprint(rdb, __LINE__, "pthread_create");
         targs[i].id = -1;
         err = true;
       }
@@ -284,7 +395,7 @@ static int procwrite(const char *host, int port, int tnum, int rnum,
       if(targs[i].id == -1) continue;
       void *rv;
       if(pthread_join(threads[i], &rv) != 0){
-        eprint(rdb, "pthread_join");
+        eprint(rdb, __LINE__, "pthread_join");
         err = true;
       } else if(rv){
         err = true;
@@ -295,7 +406,7 @@ static int procwrite(const char *host, int port, int tnum, int rnum,
   iprintf("size: %llu\n", (unsigned long long)tcrdbsize(rdb));
   for(int i = 0; i < tnum; i++){
     if(!tcrdbclose(rdbs[i])){
-      eprint(rdbs[i], "tcrdbclose");
+      eprint(rdbs[i], __LINE__, "tcrdbclose");
       err = true;
     }
     tcrdbdel(rdbs[i]);
@@ -315,8 +426,8 @@ static int procread(const char *host, int port, int tnum, int mul, bool rnd){
   TCRDB *rdbs[tnum];
   for(int i = 0; i < tnum; i++){
     rdbs[i] = tcrdbnew();
-    if(!tcrdbopen(rdbs[i], host, port)){
-      eprint(rdbs[i], "tcrdbopen");
+    if(!myopen(rdbs[i], host, port)){
+      eprint(rdbs[i], __LINE__, "tcrdbopen");
       err = true;
     }
   }
@@ -339,7 +450,7 @@ static int procread(const char *host, int port, int tnum, int mul, bool rnd){
       targs[i].rnd = rnd;
       targs[i].id = i;
       if(pthread_create(threads + i, NULL, threadread, targs + i) != 0){
-        eprint(rdb, "pthread_create");
+        eprint(rdb, __LINE__, "pthread_create");
         targs[i].id = -1;
         err = true;
       }
@@ -348,7 +459,7 @@ static int procread(const char *host, int port, int tnum, int mul, bool rnd){
       if(targs[i].id == -1) continue;
       void *rv;
       if(pthread_join(threads[i], &rv) != 0){
-        eprint(rdb, "pthread_join");
+        eprint(rdb, __LINE__, "pthread_join");
         err = true;
       } else if(rv){
         err = true;
@@ -359,7 +470,7 @@ static int procread(const char *host, int port, int tnum, int mul, bool rnd){
   iprintf("size: %llu\n", (unsigned long long)tcrdbsize(rdb));
   for(int i = 0; i < tnum; i++){
     if(!tcrdbclose(rdbs[i])){
-      eprint(rdbs[i], "tcrdbclose");
+      eprint(rdbs[i], __LINE__, "tcrdbclose");
       err = true;
     }
     tcrdbdel(rdbs[i]);
@@ -378,8 +489,8 @@ static int procremove(const char *host, int port, int tnum, bool rnd){
   TCRDB *rdbs[tnum];
   for(int i = 0; i < tnum; i++){
     rdbs[i] = tcrdbnew();
-    if(!tcrdbopen(rdbs[i], host, port)){
-      eprint(rdbs[i], "tcrdbopen");
+    if(!myopen(rdbs[i], host, port)){
+      eprint(rdbs[i], __LINE__, "tcrdbopen");
       err = true;
     }
   }
@@ -400,7 +511,7 @@ static int procremove(const char *host, int port, int tnum, bool rnd){
       targs[i].rnd = rnd;
       targs[i].id = i;
       if(pthread_create(threads + i, NULL, threadremove, targs + i) != 0){
-        eprint(rdb, "pthread_create");
+        eprint(rdb, __LINE__, "pthread_create");
         targs[i].id = -1;
         err = true;
       }
@@ -409,7 +520,7 @@ static int procremove(const char *host, int port, int tnum, bool rnd){
       if(targs[i].id == -1) continue;
       void *rv;
       if(pthread_join(threads[i], &rv) != 0){
-        eprint(rdb, "pthread_join");
+        eprint(rdb, __LINE__, "pthread_join");
         err = true;
       } else if(rv){
         err = true;
@@ -420,7 +531,139 @@ static int procremove(const char *host, int port, int tnum, bool rnd){
   iprintf("size: %llu\n", (unsigned long long)tcrdbsize(rdb));
   for(int i = 0; i < tnum; i++){
     if(!tcrdbclose(rdbs[i])){
-      eprint(rdbs[i], "tcrdbclose");
+      eprint(rdbs[i], __LINE__, "tcrdbclose");
+      err = true;
+    }
+    tcrdbdel(rdbs[i]);
+  }
+  iprintf("time: %.3f\n", tctime() - stime);
+  iprintf("%s\n\n", err ? "error" : "ok");
+  return err ? 1 : 0;
+}
+
+
+/* perform typical command */
+static int proctypical(const char *host, int port, int tnum, int rnum){
+  iprintf("<Typical Access Test>\n  host=%s  port=%d  tnum=%d  rnum=%d\n\n",
+          host, port, tnum, rnum);
+  bool err = false;
+  double stime = tctime();
+  TCRDB *rdbs[tnum];
+  for(int i = 0; i < tnum; i++){
+    rdbs[i] = tcrdbnew();
+    if(!myopen(rdbs[i], host, port)){
+      eprint(rdbs[i], __LINE__, "tcrdbopen");
+      err = true;
+    }
+  }
+  TCRDB *rdb = rdbs[0];
+  TARGTYPICAL targs[tnum];
+  pthread_t threads[tnum];
+  if(tnum == 1){
+    targs[0].rdb = rdbs[0];
+    targs[0].rnum = rnum;
+    targs[0].id = 0;
+    if(threadtypical(targs) != NULL) err = true;
+  } else {
+    for(int i = 0; i < tnum; i++){
+      targs[i].rdb = rdbs[i];
+      targs[i].rnum = rnum;
+      targs[i].id = i;
+      if(pthread_create(threads + i, NULL, threadtypical, targs + i) != 0){
+        eprint(rdb, __LINE__, "pthread_create");
+        targs[i].id = -1;
+        err = true;
+      }
+    }
+    for(int i = 0; i < tnum; i++){
+      if(targs[i].id == -1) continue;
+      void *rv;
+      if(pthread_join(threads[i], &rv) != 0){
+        eprint(rdb, __LINE__, "pthread_join");
+        err = true;
+      } else if(rv){
+        err = true;
+      }
+    }
+  }
+  iprintf("record number: %llu\n", (unsigned long long)tcrdbrnum(rdb));
+  iprintf("size: %llu\n", (unsigned long long)tcrdbsize(rdb));
+  for(int i = 0; i < tnum; i++){
+    if(!tcrdbclose(rdbs[i])){
+      eprint(rdbs[i], __LINE__, "tcrdbclose");
+      err = true;
+    }
+    tcrdbdel(rdbs[i]);
+  }
+  iprintf("time: %.3f\n", tctime() - stime);
+  iprintf("%s\n\n", err ? "error" : "ok");
+  return err ? 1 : 0;
+}
+
+
+/* perform table command */
+static int proctable(const char *host, int port, int tnum, int rnum, bool rnd){
+  iprintf("<Table Extension Test>\n  host=%s  port=%d  tnum=%d  rnum=%d  rnd=%d\n\n",
+          host, port, tnum, rnum, rnd);
+  bool err = false;
+  double stime = tctime();
+  TCRDB *rdbs[tnum];
+  for(int i = 0; i < tnum; i++){
+    rdbs[i] = tcrdbnew();
+    if(!myopen(rdbs[i], host, port)){
+      eprint(rdbs[i], __LINE__, "tcrdbopen");
+      err = true;
+    }
+  }
+  TCRDB *rdb = rdbs[0];
+  if(!tcrdbvanish(rdb)){
+    eprint(rdb, __LINE__, "tcrdbvanish");
+    err = true;
+  }
+  if(!tcrdbtblsetindex(rdb, "c", RDBITLEXICAL)){
+    eprint(rdb, __LINE__, "tcrdbtblsetindex");
+    err = true;
+  }
+  if(!tcrdbtblsetindex(rdb, "x", RDBITDECIMAL)){
+    eprint(rdb, __LINE__, "tcrdbtblsetindex");
+    err = true;
+  }
+  TARGTABLE targs[tnum];
+  pthread_t threads[tnum];
+  if(tnum == 1){
+    targs[0].rdb = rdbs[0];
+    targs[0].rnum = rnum;
+    targs[0].rnd = rnd;
+    targs[0].id = 0;
+    if(threadtable(targs) != NULL) err = true;
+  } else {
+    for(int i = 0; i < tnum; i++){
+      targs[i].rdb = rdbs[i];
+      targs[i].rnum = rnum;
+      targs[i].rnd = rnd;
+      targs[i].id = i;
+      if(pthread_create(threads + i, NULL, threadtable, targs + i) != 0){
+        eprint(rdb, __LINE__, "pthread_create");
+        targs[i].id = -1;
+        err = true;
+      }
+    }
+    for(int i = 0; i < tnum; i++){
+      if(targs[i].id == -1) continue;
+      void *rv;
+      if(pthread_join(threads[i], &rv) != 0){
+        eprint(rdb, __LINE__, "pthread_join");
+        err = true;
+      } else if(rv){
+        err = true;
+      }
+    }
+  }
+  iprintf("record number: %llu\n", (unsigned long long)tcrdbrnum(rdb));
+  iprintf("size: %llu\n", (unsigned long long)tcrdbsize(rdb));
+  for(int i = 0; i < tnum; i++){
+    if(!tcrdbclose(rdbs[i])){
+      eprint(rdbs[i], __LINE__, "tcrdbclose");
       err = true;
     }
     tcrdbdel(rdbs[i]);
@@ -446,7 +689,7 @@ static void *threadwrite(void *targ){
     int len = sprintf(buf, "%08d", base + (rnd ? myrand(i) + 1 : i));
     if(nr){
       if(!tcrdbputnr(rdb, buf, len, buf, len)){
-        eprint(rdb, "tcrdbputnr");
+        eprint(rdb, __LINE__, "tcrdbputnr");
         err = true;
         break;
       }
@@ -454,14 +697,14 @@ static void *threadwrite(void *targ){
       int rsiz;
       char *rbuf = tcrdbext(rdb, ext, 0, buf, len, buf, len, &rsiz);
       if(!rbuf && tcrdbecode(rdb) != TCEMISC){
-        eprint(rdb, "tcrdbext");
+        eprint(rdb, __LINE__, "tcrdbext");
         err = true;
         break;
       }
       tcfree(rbuf);
     } else {
       if(!tcrdbput(rdb, buf, len, buf, len)){
-        eprint(rdb, "tcrdbput");
+        eprint(rdb, __LINE__, "tcrdbput");
         err = true;
         break;
       }
@@ -493,7 +736,7 @@ static void *threadread(void *targ){
       tcmapput(recs, kbuf, ksiz, kbuf, ksiz);
       if(i % mul == 0){
         if(!tcrdbget3(rdb, recs)){
-          eprint(rdb, "tcrdbget3");
+          eprint(rdb, __LINE__, "tcrdbget3");
           err = true;
           break;
         }
@@ -503,7 +746,7 @@ static void *threadread(void *targ){
       int vsiz;
       char *vbuf = tcrdbget(rdb, kbuf, ksiz, &vsiz);
       if(!vbuf && !rnd){
-        eprint(rdb, "tcrdbget");
+        eprint(rdb, __LINE__, "tcrdbget");
         err = true;
         break;
       }
@@ -532,10 +775,132 @@ static void *threadremove(void *targ){
     char kbuf[RECBUFSIZ];
     int ksiz = sprintf(kbuf, "%08d", base + (rnd ? myrandnd(i) + 1 : i));
     if(!tcrdbout(rdb, kbuf, ksiz) && !rnd){
-      eprint(rdb, "tcrdbout");
+      eprint(rdb, __LINE__, "tcrdbout");
       err = true;
       break;
     }
+    if(id == 0 && rnum > 250 && i % (rnum / 250) == 0){
+      putchar('.');
+      fflush(stdout);
+      if(i == rnum || i % (rnum / 10) == 0) iprintf(" (%08d)\n", i);
+    }
+  }
+  return err ? "error" : NULL;
+}
+
+
+/* thread the typical function */
+static void *threadtypical(void *targ){
+  TCRDB *rdb = ((TARGTYPICAL *)targ)->rdb;
+  int rnum = ((TARGTYPICAL *)targ)->rnum;
+  int id = ((TARGTYPICAL *)targ)->id;
+  bool err = false;
+  int range = (id + 1) * rnum;
+  for(int i = 1; i <= rnum && !err; i++){
+    char kbuf[RECBUFSIZ];
+    int ksiz = sprintf(kbuf, "%d", myrand(range) + 1);
+    char *vbuf;
+    int vsiz;
+    switch(myrand(6)){
+    case 0:
+      if(!tcrdbput(rdb, kbuf, ksiz, kbuf, ksiz)){
+        eprint(rdb, __LINE__, "tcrdbput");
+        err = true;
+      }
+      break;
+    case 1:
+      if(!tcrdbputkeep(rdb, kbuf, ksiz, kbuf, ksiz) && tcrdbecode(rdb) != TTEKEEP){
+        eprint(rdb, __LINE__, "tcrdbputkeep");
+        err = true;
+      }
+      break;
+    case 2:
+      if(!tcrdbputcat(rdb, kbuf, ksiz, kbuf, ksiz)){
+        eprint(rdb, __LINE__, "tcrdbputcat");
+        err = true;
+      }
+      break;
+    case 3:
+      if(!tcrdbputnr(rdb, kbuf, ksiz, kbuf, ksiz)){
+        eprint(rdb, __LINE__, "tcrdbputnr");
+        err = true;
+      }
+      break;
+    case 4:
+      if(!tcrdbout(rdb, kbuf, ksiz) && tcrdbecode(rdb) != TTENOREC){
+        eprint(rdb, __LINE__, "tcrdbout");
+        err = true;
+      }
+      break;
+    default:
+      vbuf = tcrdbget(rdb, kbuf, ksiz, &vsiz);
+      if(vbuf){
+        tcfree(vbuf);
+      } else if(tcrdbecode(rdb) != TTENOREC){
+        eprint(rdb, __LINE__, "tcrdbget");
+        err = true;
+      }
+    }
+    if(id == 0 && rnum > 250 && i % (rnum / 250) == 0){
+      putchar('.');
+      fflush(stdout);
+      if(i == rnum || i % (rnum / 10) == 0) iprintf(" (%08d)\n", i);
+    }
+  }
+  return err ? "error" : NULL;
+}
+
+
+/* thread the table function */
+static void *threadtable(void *targ){
+  TCRDB *rdb = ((TARGTABLE *)targ)->rdb;
+  int rnum = ((TARGTABLE *)targ)->rnum;
+  bool rnd = ((TARGREMOVE *)targ)->rnd;
+  int id = ((TARGTABLE *)targ)->id;
+  bool err = false;
+  int base = id * rnum;
+  for(int i = 1; i <= rnum && !err; i++){
+    char pkbuf[RECBUFSIZ];
+    int pksiz = sprintf(pkbuf, "%08d", base + (rnd ? myrand(rnum / 2 + i) : i));
+    TCMAP *cols = tcmapnew2(7);
+    char vbuf[RECBUFSIZ*5];
+    int vsiz = sprintf(vbuf, "%d", myrand(i) + 1);
+    tcmapput(cols, "c", 1, vbuf, vsiz);
+    vsiz = sprintf(vbuf, "%lld", (long long)tctime() + (rnd ? myrand(3600) + 1 : 60));
+    tcmapput(cols, "x", 1, vbuf, vsiz);
+    if(rnd){
+      int act = myrand(100);
+      if(act < 5){
+        RDBQRY *qry = tcrdbqrynew(rdb);
+        if(myrand(5) == 0){
+          sprintf(vbuf, "%d", myrand(i));
+          tcrdbqryaddcond(qry, "c", RDBQCSTREQ, vbuf);
+        } else {
+          sprintf(vbuf, "%d,%d", myrand(rnum), myrand(rnum));
+          tcrdbqryaddcond(qry, "x", RDBQCNUMBT, vbuf);
+        }
+        tcrdbqrysetlimit(qry, 10, 0);
+        TCLIST *res = tcrdbqrysearch(qry);
+        tclistdel(res);
+        tcrdbqrydel(qry);
+      } else if(act < 10){
+        if(!tcrdbtblout(rdb, pkbuf, pksiz) && tcrdbecode(rdb) != TTENOREC){
+          eprint(rdb, __LINE__, "tcrdbtblout");
+          err = true;
+        }
+      } else {
+        if(!tcrdbtblput(rdb, pkbuf, pksiz, cols)){
+          eprint(rdb, __LINE__, "tcrdbtblput");
+          err = true;
+        }
+      }
+    } else {
+      if(!tcrdbtblput(rdb, pkbuf, pksiz, cols)){
+        eprint(rdb, __LINE__, "tcrdbtblput");
+        err = true;
+      }
+    }
+    tcmapdel(cols);
     if(id == 0 && rnum > 250 && i % (rnum / 250) == 0){
       putchar('.');
       fflush(stdout);

@@ -1,6 +1,6 @@
 /*************************************************************************************************
  * The update log API of Tokyo Tyrant
- *                                                      Copyright (C) 2006-2009 Mikio Hirabayashi
+ *                                                               Copyright (C) 2006-2010 FAL Labs
  * This file is part of Tokyo Tyrant.
  * Tokyo Tyrant is free software; you can redistribute it and/or modify it under the terms of
  * the GNU Lesser General Public License as published by the Free Software Foundation; either
@@ -27,14 +27,7 @@
 __TCULOG_CLINKAGEBEGIN
 
 
-#include <tcutil.h>
-#include <tcadb.h>
 #include <ttutil.h>
-#include <stdlib.h>
-#include <stdbool.h>
-#include <stdint.h>
-#include <time.h>
-#include <pthread.h>
 
 
 
@@ -221,6 +214,22 @@ bool tculogadbputkeep(TCULOG *ulog, uint32_t sid, uint32_t mid, TCADB *adb,
    If there is no corresponding record, a new record is created. */
 bool tculogadbputcat(TCULOG *ulog, uint32_t sid, uint32_t mid, TCADB *adb,
                      const void *kbuf, int ksiz, const void *vbuf, int vsiz);
+
+
+/* Concatenate a value at the end of the existing record and shift it to the left.
+   `ulog' specifies the update log object.
+   `sid' specifies the origin server ID of the message.
+   `mid' specifies the master server ID of the message.
+   `adb' specifies the abstract database object.
+   `kbuf' specifies the pointer to the region of the key.
+   `ksiz' specifies the size of the region of the key.
+   `vbuf' specifies the pointer to the region of the value.
+   `vsiz' specifies the size of the region of the value.
+   `width' specifies the width of the record.
+   If successful, the return value is true, else, it is false.
+   If there is no corresponding record, a new record is created. */
+bool tculogadbputshl(TCULOG *ulog, uint32_t sid, uint32_t mid, TCADB *adb,
+                     const void *kbuf, int ksiz, const void *vbuf, int vsiz, int width);
 
 
 /* Remove a record of an abstract database object.

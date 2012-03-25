@@ -1,6 +1,6 @@
 /*************************************************************************************************
  * The remote database API of Tokyo Tyrant
- *                                                      Copyright (C) 2006-2009 Mikio Hirabayashi
+ *                                                               Copyright (C) 2006-2010 FAL Labs
  * This file is part of Tokyo Tyrant.
  * Tokyo Tyrant is free software; you can redistribute it and/or modify it under the terms of
  * the GNU Lesser General Public License as published by the Free Software Foundation; either
@@ -19,6 +19,24 @@
 #include "ttutil.h"
 #include "tcrdb.h"
 #include "myconf.h"
+
+#define RDBRECONWAIT   0.1               // wait time to reconnect
+#define RDBNUMCOLMAX   16                // maximum number of columns of the long double
+
+typedef struct {                         // type of structure for a meta search query
+  pthread_t tid;                         // thread ID number
+  RDBQRY *qry;                           // query object
+  TCLIST *res;                           // response object
+  int max;                               // max number of retrieval
+  int skip;                              // skipping number of retrieval
+} PARASEARCHARG;
+
+typedef struct {                         // type of structure for a sort record
+  const char *cbuf;                      // pointer to the column buffer
+  int csiz;                              // size of the column buffer
+  char *obuf;                            // pointer to the sort key
+  int osiz;                              // size of the sort key
+} RDBSORTREC;
 
 
 /* private function prototypes */
@@ -58,6 +76,12 @@ static uint64_t tcrdbsizeimpl(TCRDB *rdb);
 static char *tcrdbstatimpl(TCRDB *rdb);
 static TCLIST *tcrdbmiscimpl(TCRDB *rdb, const char *name, int opts, const TCLIST *args);
 static void tcrdbqrypopmeta(RDBQRY *qry, TCLIST *res);
+static void *tcrdbparasearchworker(PARASEARCHARG *arg);
+static long double tcrdbatof(const char *str);
+static int rdbcmpsortrecstrasc(const RDBSORTREC *a, const RDBSORTREC *b);
+static int rdbcmpsortrecstrdesc(const RDBSORTREC *a, const RDBSORTREC *b);
+static int rdbcmpsortrecnumasc(const RDBSORTREC *a, const RDBSORTREC *b);
+static int rdbcmpsortrecnumdesc(const RDBSORTREC *a, const RDBSORTREC *b);
 
 
 
@@ -69,15 +93,15 @@ static void tcrdbqrypopmeta(RDBQRY *qry, TCLIST *res);
 /* Get the message string corresponding to an error code. */
 const char *tcrdberrmsg(int ecode){
   switch(ecode){
-  case TTESUCCESS: return "success";
-  case TTEINVALID: return "invalid operation";
-  case TTENOHOST: return "host not found";
-  case TTEREFUSED: return "connection refused";
-  case TTESEND: return "send error";
-  case TTERECV: return "recv error";
-  case TTEKEEP: return "existing record";
-  case TTENOREC: return "no record found";
-  case TTEMISC: return "miscellaneous error";
+    case TTESUCCESS: return "success";
+    case TTEINVALID: return "invalid operation";
+    case TTENOHOST: return "host not found";
+    case TTEREFUSED: return "connection refused";
+    case TTESEND: return "send error";
+    case TTERECV: return "recv error";
+    case TTEKEEP: return "existing record";
+    case TTENOREC: return "no record found";
+    case TTEMISC: return "miscellaneous error";
   }
   return "unknown error";
 }
@@ -908,6 +932,130 @@ TCLIST *tcrdbmetasearch(RDBQRY **qrys, int num, int type){
 }
 
 
+/* Search for multiple servers in parallel. */
+TCLIST *tcrdbparasearch(RDBQRY **qrys, int num){
+  assert(qrys && num >= 0);
+  if(num < 1) return tclistnew2(1);
+  if(num < 2) return tcrdbqrysearchget(qrys[0]);
+  int ocs = PTHREAD_CANCEL_DISABLE;
+  pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &ocs);
+  TCLIST *oargs = qrys[0]->args;
+  char *oname = NULL;
+  int otype = 0;
+  int max = INT_MAX / 2;
+  int skip = 0;
+  for(int i = 0; i < tclistnum(oargs); i++){
+    int osiz;
+    const char *obuf = tclistval(oargs, i, &osiz);
+    if(!strcmp(obuf, "setlimit")){
+      TCLIST *elems = tcstrsplit2(obuf, osiz);
+      if(tclistnum(elems) > 1) max = tcatoi(tclistval2(elems, 1));
+      if(tclistnum(elems) > 2) skip = tcatoi(tclistval2(elems, 2));
+      tclistdel(elems);
+    } else if(!strcmp(obuf, "setorder")){
+      TCLIST *elems = tcstrsplit2(obuf, osiz);
+      if(tclistnum(elems) > 2){
+        oname = tcstrdup(tclistval2(elems, 1));
+        otype = tcatoi(tclistval2(elems, 2));
+      }
+      tclistdel(elems);
+    }
+  }
+  int onsiz = oname ? strlen(oname) : 0;
+  if(max < 1 || max > INT_MAX / 2) max = INT_MAX / 2;
+  if(skip < 0) skip = 0;
+  PARASEARCHARG args[num];
+  for(int i = 0; i < num; i++){
+    PARASEARCHARG *arg = args + i;
+    arg->qry = qrys[i];
+    arg->res = NULL;
+    arg->max = max;
+    arg->skip = skip;
+    if(pthread_create(&arg->tid, NULL, (void *(*)(void *))tcrdbparasearchworker, arg) != 0)
+      arg->qry = NULL;
+  }
+  int all = 0;
+  for(int i = 0; i < num; i++){
+    PARASEARCHARG *arg = args + i;
+    if(arg->qry) pthread_join(arg->tid, NULL);
+    if(arg->res){
+      tcrdbqrypopmeta(arg->qry, arg->res);
+      all += tclistnum(arg->res);
+    }
+  }
+  RDBSORTREC *recs = tcmalloc(sizeof(*recs) * all + 1);
+  int rnum = 0;
+  for(int i = 0; i < num; i++){
+    PARASEARCHARG *arg = args + i;
+    if(arg->res){
+      int tnum = tclistnum(arg->res);
+      for(int j = 0; j < tnum; j++){
+        int csiz;
+        const char *cbuf = tclistval(arg->res, j, &csiz);
+        recs[rnum].cbuf = cbuf;
+        recs[rnum].csiz = csiz;
+        recs[rnum].obuf = NULL;
+        recs[rnum].osiz = 0;
+        if(oname){
+          TCMAP *cols = tcstrsplit4(cbuf, csiz);
+          int osiz;
+          const char *obuf = tcmapget(cols, oname, onsiz, &osiz);
+          if(obuf){
+            recs[rnum].obuf = tcmemdup(obuf, osiz);
+            recs[rnum].osiz = osiz;
+          }
+          tcmapdel(cols);
+        }
+        rnum++;
+      }
+    }
+  }
+  if(oname){
+    int (*compar)(const RDBSORTREC *a, const RDBSORTREC *b) = NULL;
+    switch(otype){
+      case RDBQOSTRASC:
+        compar = rdbcmpsortrecstrasc;
+        break;
+      case RDBQOSTRDESC:
+        compar = rdbcmpsortrecstrdesc;
+        break;
+      case RDBQONUMASC:
+        compar = rdbcmpsortrecnumasc;
+        break;
+      case RDBQONUMDESC:
+        compar = rdbcmpsortrecnumdesc;
+        break;
+    }
+    if(compar) qsort(recs, rnum, sizeof(*recs), (int (*)(const void *, const void *))compar);
+    for(int i = 0; i < rnum; i++){
+      tcfree(recs[i].obuf);
+    }
+  }
+  TCLIST *res = tclistnew2(tclmin(rnum, max));
+  TCMAP *uset = tcmapnew2(rnum + 1);
+  for(int i = 0; max > 0 && i < rnum; i++){
+    RDBSORTREC *rec = recs + i;
+    if(tcmapputkeep(uset, rec->cbuf, rec->csiz, "", 0)){
+      if(skip > 0){
+        skip--;
+      } else {
+        tclistpush(res, rec->cbuf, rec->csiz);
+        max--;
+      }
+    }
+  }
+  tcmapdel(uset);
+  for(int i = 0; i < num; i++){
+    PARASEARCHARG *arg = args + i;
+    if(arg->res) tclistdel(arg->res);
+  }
+  tcfree(recs);
+  tcfree(oname);
+  pthread_setcancelstate(ocs, NULL);
+  return res;
+}
+
+
 
 /*************************************************************************************************
  * features for experts
@@ -953,10 +1101,12 @@ static void tcrdbunlockmethod(TCRDB *rdb){
    If successful, the return value is true, else, it is false. */
 static bool tcrdbreconnect(TCRDB *rdb){
   assert(rdb);
-  ttsockdel(rdb->sock);
-  ttclosesock(rdb->fd);
-  rdb->fd = -1;
-  rdb->sock = NULL;
+  if(rdb->sock){
+    ttsockdel(rdb->sock);
+    ttclosesock(rdb->fd);
+    rdb->fd = -1;
+    rdb->sock = NULL;
+  }
   int fd;
   if(rdb->port < 1){
     fd = ttopensockunix(rdb->host);
@@ -986,7 +1136,9 @@ static bool tcrdbreconnect(TCRDB *rdb){
 static bool tcrdbsend(TCRDB *rdb, const void *buf, int size){
   assert(rdb && buf && size >= 0);
   if(ttsockcheckend(rdb->sock)){
-    if(!(rdb->opts & RDBTRECON) || !tcrdbreconnect(rdb)) return false;
+    if(!(rdb->opts & RDBTRECON)) return false;
+    tcsleep(RDBRECONWAIT);
+    if(!tcrdbreconnect(rdb)) return false;
     if(ttsocksend(rdb->sock, buf, size)) return true;
     tcrdbsetecode(rdb, TTESEND);
     return false;
@@ -994,7 +1146,9 @@ static bool tcrdbsend(TCRDB *rdb, const void *buf, int size){
   ttsocksetlife(rdb->sock, rdb->timeout);
   if(ttsocksend(rdb->sock, buf, size)) return true;
   tcrdbsetecode(rdb, TTESEND);
-  if(!(rdb->opts & RDBTRECON) || !tcrdbreconnect(rdb)) return false;
+  if(!(rdb->opts & RDBTRECON)) return false;
+  tcsleep(RDBRECONWAIT);
+  if(!tcrdbreconnect(rdb)) return false;
   ttsocksetlife(rdb->sock, rdb->timeout);
   if(ttsocksend(rdb->sock, buf, size)) return true;
   tcrdbsetecode(rdb, TTESEND);
@@ -1091,8 +1245,11 @@ static bool tcrdbcloseimpl(TCRDB *rdb){
 static bool tcrdbputimpl(TCRDB *rdb, const void *kbuf, int ksiz, const void *vbuf, int vsiz){
   assert(rdb && kbuf && ksiz >= 0 && vbuf && vsiz >= 0);
   if(rdb->fd < 0){
-    tcrdbsetecode(rdb, TTEINVALID);
-    return false;
+    if(!rdb->host || !(rdb->opts & RDBTRECON)){
+      tcrdbsetecode(rdb, TTEINVALID);
+      return false;
+    }
+    if(!tcrdbreconnect(rdb)) return false;
   }
   bool err = false;
   int rsiz = 2 + sizeof(uint32_t) * 2 + ksiz + vsiz;
@@ -1137,8 +1294,11 @@ static bool tcrdbputimpl(TCRDB *rdb, const void *kbuf, int ksiz, const void *vbu
 static bool tcrdbputkeepimpl(TCRDB *rdb, const void *kbuf, int ksiz, const void *vbuf, int vsiz){
   assert(rdb && kbuf && ksiz >= 0 && vbuf && vsiz >= 0);
   if(rdb->fd < 0){
-    tcrdbsetecode(rdb, TTEINVALID);
-    return false;
+    if(!rdb->host || !(rdb->opts & RDBTRECON)){
+      tcrdbsetecode(rdb, TTEINVALID);
+      return false;
+    }
+    if(!tcrdbreconnect(rdb)) return false;
   }
   bool err = false;
   int rsiz = 2 + sizeof(uint32_t) * 2 + ksiz + vsiz;
@@ -1183,8 +1343,11 @@ static bool tcrdbputkeepimpl(TCRDB *rdb, const void *kbuf, int ksiz, const void 
 static bool tcrdbputcatimpl(TCRDB *rdb, const void *kbuf, int ksiz, const void *vbuf, int vsiz){
   assert(rdb && kbuf && ksiz >= 0 && vbuf && vsiz >= 0);
   if(rdb->fd < 0){
-    tcrdbsetecode(rdb, TTEINVALID);
-    return false;
+    if(!rdb->host || !(rdb->opts & RDBTRECON)){
+      tcrdbsetecode(rdb, TTEINVALID);
+      return false;
+    }
+    if(!tcrdbreconnect(rdb)) return false;
   }
   bool err = false;
   int rsiz = 2 + sizeof(uint32_t) * 2 + ksiz + vsiz;
@@ -1231,8 +1394,11 @@ static bool tcrdbputshlimpl(TCRDB *rdb, const void *kbuf, int ksiz, const void *
                             int width){
   assert(rdb && kbuf && ksiz >= 0 && vbuf && vsiz >= 0 && width >= 0);
   if(rdb->fd < 0){
-    tcrdbsetecode(rdb, TTEINVALID);
-    return false;
+    if(!rdb->host || !(rdb->opts & RDBTRECON)){
+      tcrdbsetecode(rdb, TTEINVALID);
+      return false;
+    }
+    if(!tcrdbreconnect(rdb)) return false;
   }
   bool err = false;
   int rsiz = 2 + sizeof(uint32_t) * 3 + ksiz + vsiz;
@@ -1280,8 +1446,11 @@ static bool tcrdbputshlimpl(TCRDB *rdb, const void *kbuf, int ksiz, const void *
 static bool tcrdbputnrimpl(TCRDB *rdb, const void *kbuf, int ksiz, const void *vbuf, int vsiz){
   assert(rdb && kbuf && ksiz >= 0 && vbuf && vsiz >= 0);
   if(rdb->fd < 0){
-    tcrdbsetecode(rdb, TTEINVALID);
-    return false;
+    if(!rdb->host || !(rdb->opts & RDBTRECON)){
+      tcrdbsetecode(rdb, TTEINVALID);
+      return false;
+    }
+    if(!tcrdbreconnect(rdb)) return false;
   }
   bool err = false;
   int rsiz = 2 + sizeof(uint32_t) * 2 + ksiz + vsiz;
@@ -1316,8 +1485,11 @@ static bool tcrdbputnrimpl(TCRDB *rdb, const void *kbuf, int ksiz, const void *v
 static bool tcrdboutimpl(TCRDB *rdb, const void *kbuf, int ksiz){
   assert(rdb && kbuf && ksiz >= 0);
   if(rdb->fd < 0){
-    tcrdbsetecode(rdb, TTEINVALID);
-    return false;
+    if(!rdb->host || !(rdb->opts & RDBTRECON)){
+      tcrdbsetecode(rdb, TTEINVALID);
+      return false;
+    }
+    if(!tcrdbreconnect(rdb)) return false;
   }
   bool err = false;
   int rsiz = 2 + sizeof(uint32_t) + ksiz;
@@ -1358,8 +1530,11 @@ static bool tcrdboutimpl(TCRDB *rdb, const void *kbuf, int ksiz){
 static void *tcrdbgetimpl(TCRDB *rdb, const void *kbuf, int ksiz, int *sp){
   assert(rdb && kbuf && ksiz >= 0 && sp);
   if(rdb->fd < 0){
-    tcrdbsetecode(rdb, TTEINVALID);
-    return NULL;
+    if(!rdb->host || !(rdb->opts & RDBTRECON)){
+      tcrdbsetecode(rdb, TTEINVALID);
+      return NULL;
+    }
+    if(!tcrdbreconnect(rdb)) return NULL;
   }
   char *vbuf = NULL;
   int rsiz = 2 + sizeof(uint32_t) + ksiz;
@@ -1408,8 +1583,11 @@ static void *tcrdbgetimpl(TCRDB *rdb, const void *kbuf, int ksiz, int *sp){
 static bool tcrdbmgetimpl(TCRDB *rdb, TCMAP *recs){
   assert(rdb && recs);
   if(rdb->fd < 0){
-    tcrdbsetecode(rdb, TTEINVALID);
-    return NULL;
+    if(!rdb->host || !(rdb->opts & RDBTRECON)){
+      tcrdbsetecode(rdb, TTEINVALID);
+      return false;
+    }
+    if(!tcrdbreconnect(rdb)) return false;
   }
   bool err = false;
   TCXSTR *xstr = tcxstrnew();
@@ -1480,8 +1658,11 @@ static bool tcrdbmgetimpl(TCRDB *rdb, TCMAP *recs){
 static int tcrdbvsizimpl(TCRDB *rdb, const void *kbuf, int ksiz){
   assert(rdb && kbuf && ksiz >= 0);
   if(rdb->fd < 0){
-    tcrdbsetecode(rdb, TTEINVALID);
-    return -1;
+    if(!rdb->host || !(rdb->opts & RDBTRECON)){
+      tcrdbsetecode(rdb, TTEINVALID);
+      return -1;
+    }
+    if(!tcrdbreconnect(rdb)) return -1;
   }
   int vsiz = -1;
   int rsiz = 2 + sizeof(uint32_t) + ksiz;
@@ -1520,8 +1701,11 @@ static int tcrdbvsizimpl(TCRDB *rdb, const void *kbuf, int ksiz){
 static bool tcrdbiterinitimpl(TCRDB *rdb){
   assert(rdb);
   if(rdb->fd < 0){
-    tcrdbsetecode(rdb, TTEINVALID);
-    return 0;
+    if(!rdb->host || !(rdb->opts & RDBTRECON)){
+      tcrdbsetecode(rdb, TTEINVALID);
+      return false;
+    }
+    if(!tcrdbreconnect(rdb)) return false;
   }
   bool err = false;
   unsigned char buf[TTIOBUFSIZ];
@@ -1550,8 +1734,11 @@ static bool tcrdbiterinitimpl(TCRDB *rdb){
 static void *tcrdbiternextimpl(TCRDB *rdb, int *sp){
   assert(rdb && sp);
   if(rdb->fd < 0){
-    tcrdbsetecode(rdb, TTEINVALID);
-    return NULL;
+    if(!rdb->host || !(rdb->opts & RDBTRECON)){
+      tcrdbsetecode(rdb, TTEINVALID);
+      return NULL;
+    }
+    if(!tcrdbreconnect(rdb)) return NULL;
   }
   char *vbuf = NULL;
   unsigned char buf[TTIOBUFSIZ];
@@ -1593,8 +1780,11 @@ static TCLIST *tcrdbfwmkeysimpl(TCRDB *rdb, const void *pbuf, int psiz, int max)
   assert(rdb && pbuf && psiz >= 0);
   TCLIST *keys = tclistnew();
   if(rdb->fd < 0){
-    tcrdbsetecode(rdb, TTEINVALID);
-    return keys;
+    if(!rdb->host || !(rdb->opts & RDBTRECON)){
+      tcrdbsetecode(rdb, TTEINVALID);
+      return NULL;
+    }
+    if(!tcrdbreconnect(rdb)) return NULL;
   }
   int rsiz = 2 + sizeof(uint32_t) * 2 + psiz;
   if(max < 0) max = INT_MAX;
@@ -1653,8 +1843,11 @@ static TCLIST *tcrdbfwmkeysimpl(TCRDB *rdb, const void *pbuf, int psiz, int max)
 static int tcrdbaddintimpl(TCRDB *rdb, const void *kbuf, int ksiz, int num){
   assert(rdb && kbuf && ksiz >= 0);
   if(rdb->fd < 0){
-    tcrdbsetecode(rdb, TTEINVALID);
-    return false;
+    if(!rdb->host || !(rdb->opts & RDBTRECON)){
+      tcrdbsetecode(rdb, TTEINVALID);
+      return INT_MIN;
+    }
+    if(!tcrdbreconnect(rdb)) return INT_MIN;
   }
   int sum = INT_MIN;
   int rsiz = 2 + sizeof(uint32_t) * 2 + ksiz;
@@ -1699,8 +1892,11 @@ static int tcrdbaddintimpl(TCRDB *rdb, const void *kbuf, int ksiz, int num){
 static double tcrdbadddoubleimpl(TCRDB *rdb, const void *kbuf, int ksiz, double num){
   assert(rdb && kbuf && ksiz >= 0);
   if(rdb->fd < 0){
-    tcrdbsetecode(rdb, TTEINVALID);
-    return false;
+    if(!rdb->host || !(rdb->opts & RDBTRECON)){
+      tcrdbsetecode(rdb, TTEINVALID);
+      return nan("");
+    }
+    if(!tcrdbreconnect(rdb)) return nan("");
   }
   double sum = nan("");
   int rsiz = 2 + sizeof(uint32_t) + sizeof(uint64_t) * 2 + ksiz;
@@ -1751,8 +1947,11 @@ static void *tcrdbextimpl(TCRDB *rdb, const char *name, int opts,
                           const void *kbuf, int ksiz, const void *vbuf, int vsiz, int *sp){
   assert(rdb && kbuf && ksiz >= 0 && vbuf && vsiz >= 0);
   if(rdb->fd < 0){
-    tcrdbsetecode(rdb, TTEINVALID);
-    return NULL;
+    if(!rdb->host || !(rdb->opts & RDBTRECON)){
+      tcrdbsetecode(rdb, TTEINVALID);
+      return NULL;
+    }
+    if(!tcrdbreconnect(rdb)) return NULL;
   }
   char *xbuf = NULL;
   int nsiz = strlen(name);
@@ -1814,8 +2013,11 @@ static void *tcrdbextimpl(TCRDB *rdb, const char *name, int opts,
 static bool tcrdbsyncimpl(TCRDB *rdb){
   assert(rdb);
   if(rdb->fd < 0){
-    tcrdbsetecode(rdb, TTEINVALID);
-    return 0;
+    if(!rdb->host || !(rdb->opts & RDBTRECON)){
+      tcrdbsetecode(rdb, TTEINVALID);
+      return false;
+    }
+    if(!tcrdbreconnect(rdb)) return false;
   }
   bool err = false;
   unsigned char buf[TTIOBUFSIZ];
@@ -1841,8 +2043,11 @@ static bool tcrdbsyncimpl(TCRDB *rdb){
 static bool tcrdboptimizeimpl(TCRDB *rdb, const char *params){
   assert(rdb);
   if(rdb->fd < 0){
-    tcrdbsetecode(rdb, TTEINVALID);
-    return false;
+    if(!rdb->host || !(rdb->opts & RDBTRECON)){
+      tcrdbsetecode(rdb, TTEINVALID);
+      return false;
+    }
+    if(!tcrdbreconnect(rdb)) return false;
   }
   if(!params) params = "";
   int psiz = strlen(params);
@@ -1880,8 +2085,11 @@ static bool tcrdboptimizeimpl(TCRDB *rdb, const char *params){
 static bool tcrdbvanishimpl(TCRDB *rdb){
   assert(rdb);
   if(rdb->fd < 0){
-    tcrdbsetecode(rdb, TTEINVALID);
-    return 0;
+    if(!rdb->host || !(rdb->opts & RDBTRECON)){
+      tcrdbsetecode(rdb, TTEINVALID);
+      return false;
+    }
+    if(!tcrdbreconnect(rdb)) return false;
   }
   bool err = false;
   unsigned char buf[TTIOBUFSIZ];
@@ -1908,8 +2116,11 @@ static bool tcrdbvanishimpl(TCRDB *rdb){
 static bool tcrdbcopyimpl(TCRDB *rdb, const char *path){
   assert(rdb && path);
   if(rdb->fd < 0){
-    tcrdbsetecode(rdb, TTEINVALID);
-    return NULL;
+    if(!rdb->host || !(rdb->opts & RDBTRECON)){
+      tcrdbsetecode(rdb, TTEINVALID);
+      return false;
+    }
+    if(!tcrdbreconnect(rdb)) return false;
   }
   bool err = false;
   int psiz = strlen(path);
@@ -1949,8 +2160,11 @@ static bool tcrdbcopyimpl(TCRDB *rdb, const char *path){
 static bool tcrdbrestoreimpl(TCRDB *rdb, const char *path, uint64_t ts, int opts){
   assert(rdb && path);
   if(rdb->fd < 0){
-    tcrdbsetecode(rdb, TTEINVALID);
-    return NULL;
+    if(!rdb->host || !(rdb->opts & RDBTRECON)){
+      tcrdbsetecode(rdb, TTEINVALID);
+      return false;
+    }
+    if(!tcrdbreconnect(rdb)) return false;
   }
   bool err = false;
   int psiz = strlen(path);
@@ -1996,8 +2210,11 @@ static bool tcrdbrestoreimpl(TCRDB *rdb, const char *path, uint64_t ts, int opts
 static bool tcrdbsetmstimpl(TCRDB *rdb, const char *host, int port, uint64_t ts, int opts){
   assert(rdb);
   if(rdb->fd < 0){
-    tcrdbsetecode(rdb, TTEINVALID);
-    return NULL;
+    if(!rdb->host || !(rdb->opts & RDBTRECON)){
+      tcrdbsetecode(rdb, TTEINVALID);
+      return false;
+    }
+    if(!tcrdbreconnect(rdb)) return false;
   }
   if(!host) host = "";
   if(port < 0) port = 0;
@@ -2046,7 +2263,7 @@ static bool tcrdbsetmstimpl(TCRDB *rdb, const char *host, int port, uint64_t ts,
    any database server. */
 const char *tcrdbexprimpl(TCRDB *rdb){
   assert(rdb);
-  if(rdb->fd < 0){
+  if(!rdb->host){
     tcrdbsetecode(rdb, TTEINVALID);
     return NULL;
   }
@@ -2061,8 +2278,11 @@ const char *tcrdbexprimpl(TCRDB *rdb){
 static uint64_t tcrdbrnumimpl(TCRDB *rdb){
   assert(rdb);
   if(rdb->fd < 0){
-    tcrdbsetecode(rdb, TTEINVALID);
-    return 0;
+    if(!rdb->host || !(rdb->opts & RDBTRECON)){
+      tcrdbsetecode(rdb, TTEINVALID);
+      return 0;
+    }
+    if(!tcrdbreconnect(rdb)) return 0;
   }
   unsigned char buf[TTIOBUFSIZ];
   unsigned char *wp = buf;
@@ -2092,8 +2312,11 @@ static uint64_t tcrdbrnumimpl(TCRDB *rdb){
 static uint64_t tcrdbsizeimpl(TCRDB *rdb){
   assert(rdb);
   if(rdb->fd < 0){
-    tcrdbsetecode(rdb, TTEINVALID);
-    return 0;
+    if(!rdb->host || !(rdb->opts & RDBTRECON)){
+      tcrdbsetecode(rdb, TTEINVALID);
+      return 0;
+    }
+    if(!tcrdbreconnect(rdb)) return 0;
   }
   unsigned char buf[TTIOBUFSIZ];
   unsigned char *wp = buf;
@@ -2123,8 +2346,11 @@ static uint64_t tcrdbsizeimpl(TCRDB *rdb){
 static char *tcrdbstatimpl(TCRDB *rdb){
   assert(rdb);
   if(rdb->fd < 0){
-    tcrdbsetecode(rdb, TTEINVALID);
-    return 0;
+    if(!rdb->host || !(rdb->opts & RDBTRECON)){
+      tcrdbsetecode(rdb, TTEINVALID);
+      return NULL;
+    }
+    if(!tcrdbreconnect(rdb)) return NULL;
   }
   unsigned char buf[TTIOBUFSIZ];
   unsigned char *wp = buf;
@@ -2161,8 +2387,11 @@ static char *tcrdbstatimpl(TCRDB *rdb){
 static TCLIST *tcrdbmiscimpl(TCRDB *rdb, const char *name, int opts, const TCLIST *args){
   assert(rdb && name && args);
   if(rdb->fd < 0){
-    tcrdbsetecode(rdb, TTEINVALID);
-    return NULL;
+    if(!rdb->host || !(rdb->opts & RDBTRECON)){
+      tcrdbsetecode(rdb, TTEINVALID);
+      return NULL;
+    }
+    if(!tcrdbreconnect(rdb)) return NULL;
   }
   bool err = false;
   TCLIST *res = NULL;
@@ -2253,6 +2482,154 @@ static void tcrdbqrypopmeta(RDBQRY *qry, TCLIST *res){
       break;
     }
   }
+}
+
+
+/* Search a server in parallel.
+   `arg' specifies the artument structure of the query and the result.
+   The return value is always `NULL'. */
+static void *tcrdbparasearchworker(PARASEARCHARG *arg){
+  assert(arg);
+  RDBQRY *qry = arg->qry;
+  TCLIST *args = tclistdup(qry->args);
+  tclistpush2(args, "get");
+  TCXSTR *xstr = tcxstrnew();
+  tcxstrcat2(xstr, "setlimit");
+  tcxstrcat(xstr, "\0", 1);
+  tcxstrprintf(xstr, "%d", arg->max + arg->skip);
+  tcxstrcat(xstr, "\0", 1);
+  tcxstrprintf(xstr, "%d", 0);
+  tclistpush(args, tcxstrptr(xstr), tcxstrsize(xstr));
+  tcxstrdel(xstr);
+  arg->res = tcrdbmisc(qry->rdb, "search", RDBMONOULOG, args);
+  tclistdel(args);
+  return NULL;
+}
+
+
+/* Convert a string to a real number.
+   `str' specifies the string.
+   The return value is the real number. */
+static long double tcrdbatof(const char *str){
+  assert(str);
+  while(*str > '\0' && *str <= ' '){
+    str++;
+  }
+  int sign = 1;
+  if(*str == '-'){
+    str++;
+    sign = -1;
+  } else if(*str == '+'){
+    str++;
+  }
+  if(tcstrifwm(str, "inf")) return HUGE_VALL * sign;
+  if(tcstrifwm(str, "nan")) return nanl("");
+  long double num = 0;
+  int col = 0;
+  while(*str != '\0'){
+    if(*str < '0' || *str > '9') break;
+    num = num * 10 + *str - '0';
+    str++;
+    if(num > 0) col++;
+  }
+  if(*str == '.'){
+    str++;
+    long double fract = 0.0;
+    long double base = 10;
+    while(col < RDBNUMCOLMAX && *str != '\0'){
+      if(*str < '0' || *str > '9') break;
+      fract += (*str - '0') / base;
+      str++;
+      col++;
+      base *= 10;
+    }
+    num += fract;
+  }
+  return num * sign;
+}
+
+
+/* Compare two sort records by string ascending.
+   `a' specifies a key.
+   `b' specifies of the other key.
+   The return value is positive if the former is big, negative if the latter is big, 0 if both
+   are equivalent. */
+static int rdbcmpsortrecstrasc(const RDBSORTREC *a, const RDBSORTREC *b){
+  assert(a && b);
+  if(!a->obuf){
+    if(!b->obuf) return 0;
+    return 1;
+  }
+  if(!b->obuf){
+    if(!a->obuf) return 0;
+    return -1;
+  }
+  return tccmplexical(a->obuf, a->osiz, b->obuf, b->osiz, NULL);
+}
+
+
+/* Compare two sort records by string descending.
+   `a' specifies a key.
+   `b' specifies of the other key.
+   The return value is positive if the former is big, negative if the latter is big, 0 if both
+   are equivalent. */
+static int rdbcmpsortrecstrdesc(const RDBSORTREC *a, const RDBSORTREC *b){
+  assert(a && b);
+  if(!a->obuf){
+    if(!b->obuf) return 0;
+    return 1;
+  }
+  if(!b->obuf){
+    if(!a->obuf) return 0;
+    return -1;
+  }
+  return -tccmplexical(a->obuf, a->osiz, b->obuf, b->osiz, NULL);
+}
+
+
+/* Compare two sort records by number ascending.
+   `a' specifies a key.
+   `b' specifies of the other key.
+   The return value is positive if the former is big, negative if the latter is big, 0 if both
+   are equivalent. */
+static int rdbcmpsortrecnumasc(const RDBSORTREC *a, const RDBSORTREC *b){
+  assert(a && b);
+  if(!a->obuf){
+    if(!b->obuf) return 0;
+    return 1;
+  }
+  if(!b->obuf){
+    if(!a->obuf) return 0;
+    return -1;
+  }
+  long double anum = tcrdbatof(a->obuf);
+  long double bnum = tcrdbatof(b->obuf);
+  if(anum < bnum) return -1;
+  if(anum > bnum) return 1;
+  return 0;
+}
+
+
+/* Compare two sort records by number descending.
+   `a' specifies a key.
+   `b' specifies of the other key.
+   The return value is positive if the former is big, negative if the latter is big, 0 if both
+   are equivalent. */
+static int rdbcmpsortrecnumdesc(const RDBSORTREC *a, const RDBSORTREC *b){
+  assert(a && b);
+  if(!a->obuf){
+    if(!b->obuf) return 0;
+    return 1;
+  }
+  if(!b->obuf){
+    if(!a->obuf) return 0;
+    return -1;
+  }
+  long double anum = tcrdbatof(a->obuf);
+  long double bnum = tcrdbatof(b->obuf);
+  if(anum < bnum) return 1;
+  if(anum > bnum) return -1;
+  return 0;
 }
 
 

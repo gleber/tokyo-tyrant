@@ -1,6 +1,6 @@
 /*************************************************************************************************
  * The test cases of the remote database API
- *                                                      Copyright (C) 2006-2009 Mikio Hirabayashi
+ *                                                               Copyright (C) 2006-2010 FAL Labs
  * This file is part of Tokyo Tyrant.
  * Tokyo Tyrant is free software; you can redistribute it and/or modify it under the terms of
  * the GNU Lesser General Public License as published by the Free Software Foundation; either
@@ -802,44 +802,44 @@ static void *threadtypical(void *targ){
     char *vbuf;
     int vsiz;
     switch(myrand(6)){
-    case 0:
-      if(!tcrdbput(rdb, kbuf, ksiz, kbuf, ksiz)){
-        eprint(rdb, __LINE__, "tcrdbput");
-        err = true;
-      }
-      break;
-    case 1:
-      if(!tcrdbputkeep(rdb, kbuf, ksiz, kbuf, ksiz) && tcrdbecode(rdb) != TTEKEEP){
-        eprint(rdb, __LINE__, "tcrdbputkeep");
-        err = true;
-      }
-      break;
-    case 2:
-      if(!tcrdbputcat(rdb, kbuf, ksiz, kbuf, ksiz)){
-        eprint(rdb, __LINE__, "tcrdbputcat");
-        err = true;
-      }
-      break;
-    case 3:
-      if(!tcrdbputnr(rdb, kbuf, ksiz, kbuf, ksiz)){
-        eprint(rdb, __LINE__, "tcrdbputnr");
-        err = true;
-      }
-      break;
-    case 4:
-      if(!tcrdbout(rdb, kbuf, ksiz) && tcrdbecode(rdb) != TTENOREC){
-        eprint(rdb, __LINE__, "tcrdbout");
-        err = true;
-      }
-      break;
-    default:
-      vbuf = tcrdbget(rdb, kbuf, ksiz, &vsiz);
-      if(vbuf){
-        tcfree(vbuf);
-      } else if(tcrdbecode(rdb) != TTENOREC){
-        eprint(rdb, __LINE__, "tcrdbget");
-        err = true;
-      }
+      case 0:
+        if(!tcrdbput(rdb, kbuf, ksiz, kbuf, ksiz)){
+          eprint(rdb, __LINE__, "tcrdbput");
+          err = true;
+        }
+        break;
+      case 1:
+        if(!tcrdbputkeep(rdb, kbuf, ksiz, kbuf, ksiz) && tcrdbecode(rdb) != TTEKEEP){
+          eprint(rdb, __LINE__, "tcrdbputkeep");
+          err = true;
+        }
+        break;
+      case 2:
+        if(!tcrdbputcat(rdb, kbuf, ksiz, kbuf, ksiz)){
+          eprint(rdb, __LINE__, "tcrdbputcat");
+          err = true;
+        }
+        break;
+      case 3:
+        if(!tcrdbputnr(rdb, kbuf, ksiz, kbuf, ksiz)){
+          eprint(rdb, __LINE__, "tcrdbputnr");
+          err = true;
+        }
+        break;
+      case 4:
+        if(!tcrdbout(rdb, kbuf, ksiz) && tcrdbecode(rdb) != TTENOREC){
+          eprint(rdb, __LINE__, "tcrdbout");
+          err = true;
+        }
+        break;
+      default:
+        vbuf = tcrdbget(rdb, kbuf, ksiz, &vsiz);
+        if(vbuf){
+          tcfree(vbuf);
+        } else if(tcrdbecode(rdb) != TTENOREC){
+          eprint(rdb, __LINE__, "tcrdbget");
+          err = true;
+        }
     }
     if(id == 0 && rnum > 250 && i % (rnum / 250) == 0){
       putchar('.');

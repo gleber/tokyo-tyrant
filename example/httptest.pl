@@ -53,6 +53,12 @@ for(my $i = 1; $i < 100; $i += 3){
     $res = $ua->request($req);
 }
 
+for(my $i = 1; $i < 100; $i += 3){
+    $req = HTTP::Request->new(POST => $baseurl . $i,
+                              ["X-TT-MNAME" => "getlist", "X-TT-MOPTS" => 1], "1=$i&2=$i");
+    $res = $ua->request($req);
+}
+
 foreach my $i (1..107){
     $req = HTTP::Request->new(GET => $baseurl . $i);
     $res = $ua->request($req);

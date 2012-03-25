@@ -1,4 +1,4 @@
-.TH "TCRDB" 3 "2009-05-06" "Man Page" "Tokyo Tyrant"
+.TH "TCRDB" 3 "2010-08-05" "Man Page" "Tokyo Tyrant"
 
 .SH NAME
 tcrdb \- the remote database API
@@ -1207,7 +1207,7 @@ The function `tcrdbqrysearchget' is used in order to get records corresponding t
 The return value is a list object of zero separated columns of the corresponding records.
 .RE
 .RS
-This function does never fail.  It returns an empty list even if no record corresponds.  Because the object of the return value is created with the function `tclistnew', it should be deleted with the function `tclistdel' when it is no longer in use.
+This function does never fail.  It returns an empty list even if no record corresponds.  Each element of the list can be treated with the function `tcrdbqryrescols'.  Because the object of the return value is created with the function `tclistnew', it should be deleted with the function `tclistdel' when it is no longer in use.
 .RE
 .RE
 .PP
@@ -1278,6 +1278,25 @@ The return value is a list object of the primary keys of the corresponding recor
 .RE
 .RS
 If the first query object has the order setting, the result array is sorted by the order.  Because the object of the return value is created with the function `tclistnew', it should be deleted with the function `tclistdel' when it is no longer in use.
+.RE
+.RE
+.PP
+The function `tcrdbparasearch' is used in order to search records for multiple servers in parallel.
+.PP
+.RS
+.br
+\fBTCLIST *tcrdbparasearch(RDBQRY **\fIqrys\fB, int \fInum\fB);\fR
+.RS
+`\fIqrys\fR' specifies an array of the query objects.
+.RE
+.RS
+`\fInum\fR' specifies the number of elements of the array.
+.RE
+.RS
+The return value is a list object of zero separated columns of the corresponding records.
+.RE
+.RS
+This function does never fail.  It returns an empty list even if no record corresponds.  Each element of the list can be treated with the function `tcrdbqryrescols'.  Because the object of the return value is created with the function `tclistnew', it should be deleted with the function `tclistdel' when it is no longer in use.
 .RE
 .RE
 

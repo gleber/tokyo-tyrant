@@ -1,6 +1,6 @@
 /*************************************************************************************************
  * The remote database API of Tokyo Tyrant
- *                                                      Copyright (C) 2006-2009 Mikio Hirabayashi
+ *                                                               Copyright (C) 2006-2010 FAL Labs
  * This file is part of Tokyo Tyrant.
  * Tokyo Tyrant is free software; you can redistribute it and/or modify it under the terms of
  * the GNU Lesser General Public License as published by the Free Software Foundation; either
@@ -27,14 +27,7 @@
 __TCRDB_CLINKAGEBEGIN
 
 
-#include <tcutil.h>
-#include <tcadb.h>
 #include <ttutil.h>
-#include <stdlib.h>
-#include <stdbool.h>
-#include <stdint.h>
-#include <time.h>
-#include <pthread.h>
 
 
 
@@ -735,8 +728,9 @@ bool tcrdbqrysearchout(RDBQRY *qry);
    `qry' specifies the query object.
    The return value is a list object of zero separated columns of the corresponding records.
    This function does never fail.  It returns an empty list even if no record corresponds.
-   Because the object of the return value is created with the function `tclistnew', it should
-   be deleted with the function `tclistdel' when it is no longer in use. */
+   Each element of the list can be treated with the function `tcrdbqryrescols'.  Because the
+   object of the return value is created with the function `tclistnew', it should be deleted with
+   the function `tclistdel' when it is no longer in use. */
 TCLIST *tcrdbqrysearchget(RDBQRY *qry);
 
 
@@ -774,6 +768,17 @@ const char *tcrdbqryhint(RDBQRY *qry);
    Because the object of the return value is created with the function `tclistnew', it should be
    deleted with the function `tclistdel' when it is no longer in use. */
 TCLIST *tcrdbmetasearch(RDBQRY **qrys, int num, int type);
+
+
+/* Search for multiple servers in parallel.
+   `qrys' specifies an array of the query objects.
+   `num' specifies the number of elements of the array.
+   The return value is a list object of zero separated columns of the corresponding records.
+   This function does never fail.  It returns an empty list even if no record corresponds.
+   Each element of the list can be treated with the function `tcrdbqryrescols'.  Because the
+   object of the return value is created with the function `tclistnew', it should be deleted with
+   the function `tclistdel' when it is no longer in use. */
+TCLIST *tcrdbparasearch(RDBQRY **qrys, int num);
 
 
 

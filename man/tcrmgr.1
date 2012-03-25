@@ -1,10 +1,9 @@
-.TH "TCRMGR" 1 "2009-05-06" "Man Page" "Tokyo Tyrant"
+.TH "TCRMGR" 1 "2010-08-05" "Man Page" "Tokyo Tyrant"
 
 .SH NAME
 tcrmgr \- the command line utility of the remote database API
 
 .SH DESCRIPTION
-.PP
 The command `\fBtcrmgr\fR' is a utility for test and debugging of the remote database API and its applications.  `\fIhost\fR' specifies the host name of the server.  `\fIkey\fR' specifies the key of a record.  `\fIvalue\fR' specifies the value of a record.  `\fIparams\fR' specifies the tuning parameters.  `\fIdpath\fR' specifies the destination file.  `\fIfunc\fR specifies the name of the function.  `\fIarg\fR' specifies the arguments of the function.  `\fIfile\fR' specifies the input file.  `\fIupath\fR' specifies the update log directory.  `\fImhost\fR' specifies the host name of the replication master.  `\fIurl\fR' specifies the target URL.
 .PP
 .RS
@@ -14,7 +13,7 @@ The command `\fBtcrmgr\fR' is a utility for test and debugging of the remote dat
 Print miscellaneous information to the standard output.
 .RE
 .br
-\fBtcrmgr put \fR[\fB\-port \fInum\fB\fR]\fB \fR[\fB\-sx\fR]\fB \fR[\fB\-sep \fIchr\fB\fR]\fB \fR[\fB\-dk\fR|\fB\-dc\fR]\fB \fIhost\fB \fIkey\fB \fIvalue\fB\fR
+\fBtcrmgr put \fR[\fB\-port \fInum\fB\fR]\fB \fR[\fB\-sx\fR]\fB \fR[\fB\-sep \fIchr\fB\fR]\fB \fR[\fB\-dk\fR|\fB\-dc\fR|\fB\-dai\fR|\fB\-dad\fR]\fB \fIhost\fB \fIkey\fB \fIvalue\fB\fR
 .RS
 Store a record.
 .RE
@@ -114,6 +113,10 @@ Options feature the following.
 \fB\-dk\fR : use the function `tcrdbputkeep' instead of `tcrdbput'.
 .br
 \fB\-dc\fR : use the function `tcrdbputcat' instead of `tcrdbput'.
+.br
+\fB\-dai\fR : use the function `tcrdbaddint' instead of `tcrdbput'.
+.br
+\fB\-dad\fR : use the function `tcrdbadddouble' instead of `tcrdbput'.
 .br
 \fB\-px\fR : output data is converted into a hexadecimal data string.
 .br

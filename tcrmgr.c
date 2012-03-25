@@ -1,6 +1,6 @@
 /*************************************************************************************************
  * The command line utility of the remote database API
- *                                                      Copyright (C) 2007-2009 Mikio Hirabayashi
+ *                                                               Copyright (C) 2006-2010 FAL Labs
  * This file is part of Tokyo Tyrant.
  * Tokyo Tyrant is free software; you can redistribute it and/or modify it under the terms of
  * the GNU Lesser General Public License as published by the Free Software Foundation; either
@@ -56,7 +56,7 @@ static int runhttp(int argc, char **argv);
 static int runversion(int argc, char **argv);
 static int procinform(const char *host, int port, bool st);
 static int procput(const char *host, int port, const char *kbuf, int ksiz,
-                   const char *vbuf, int vsiz, int dmode);
+                   const char *vbuf, int vsiz, int dmode, int shlw);
 static int procout(const char *host, int port, const char *kbuf, int ksiz);
 static int procget(const char *host, int port, const char *kbuf, int ksiz, int sep,
                    bool px, bool pz);
@@ -72,7 +72,8 @@ static int procvanish(const char *host, int port);
 static int proccopy(const char *host, int port, const char *dpath);
 static int procmisc(const char *host, int port, const char *func, int opts,
                     const TCLIST *args, int sep, bool px);
-static int procimporttsv(const char *host, int port, const char *file, bool nr, bool sc);
+static int procimporttsv(const char *host, int port, const char *file, bool nr,
+                         bool sc, int sep);
 static int procrestore(const char *host, int port, const char *upath, uint64_t ts, int opts);
 static int procsetmst(const char *host, int port, const char *mhost, int mport,
                       uint64_t ts, int opts);
@@ -136,8 +137,8 @@ static void usage(void){
   fprintf(stderr, "\n");
   fprintf(stderr, "usage:\n");
   fprintf(stderr, "  %s inform [-port num] [-st] host\n", g_progname);
-  fprintf(stderr, "  %s put [-port num] [-sx] [-sep chr] [-dk|-dc] host key value\n",
-          g_progname);
+  fprintf(stderr, "  %s put [-port num] [-sx] [-sep chr] [-dk|-dc|-dai|-dad] [-ds num]"
+          " host key value\n", g_progname);
   fprintf(stderr, "  %s out [-port num] [-sx] [-sep chr] host key\n", g_progname);
   fprintf(stderr, "  %s get [-port num] [-sx] [-sep chr] [-px] [-pz] host key\n", g_progname);
   fprintf(stderr, "  %s mget [-port num] [-sx] [-sep chr] [-px] host [key...]\n", g_progname);
@@ -151,7 +152,7 @@ static void usage(void){
   fprintf(stderr, "  %s copy [-port num] host dpath\n", g_progname);
   fprintf(stderr, "  %s misc [-port num] [-mnu] [-sx] [-sep chr] [-px] host func [arg...]\n",
           g_progname);
-  fprintf(stderr, "  %s importtsv [-port num] [-nr] [-sc] host [file]\n", g_progname);
+  fprintf(stderr, "  %s importtsv [-port num] [-nr] [-sc] [-sep chr] host [file]\n", g_progname);
   fprintf(stderr, "  %s restore [-port num] [-ts num] [-rcc] host upath\n", g_progname);
   fprintf(stderr, "  %s setmst [-port num] [-mport num] [-ts num] [-rcc] host [mhost]\n",
           g_progname);
@@ -181,13 +182,13 @@ static int sepstrtochr(const char *str){
 
 /* encode a string as a zero separaterd string */
 static char *strtozsv(const char *str, int sep, int *sp){
- int size = strlen(str);
- char *buf = tcmemdup(str, size);
- for(int i = 0; i < size; i++){
-   if(buf[i] == sep) buf[i] = '\0';
- }
- *sp = size;
- return buf;
+  int size = strlen(str);
+  char *buf = tcmemdup(str, size);
+  for(int i = 0; i < size; i++){
+    if(buf[i] == sep) buf[i] = '\0';
+  }
+  *sp = size;
+  return buf;
 }
 
 
@@ -300,6 +301,7 @@ static int runput(int argc, char **argv){
   char *value = NULL;
   int port = TTDEFPORT;
   int dmode = 0;
+  int shlw = -1;
   bool sx = false;
   int sep = -1;
   for(int i = 2; i < argc; i++){
@@ -311,6 +313,13 @@ static int runput(int argc, char **argv){
         dmode = -1;
       } else if(!strcmp(argv[i], "-dc")){
         dmode = 1;
+      } else if(!strcmp(argv[i], "-dai")){
+        dmode = 10;
+      } else if(!strcmp(argv[i], "-dad")){
+        dmode = 11;
+      } else if(!strcmp(argv[i], "-ds")){
+        if(++i >= argc) usage();
+        shlw = tcatoi(argv[i]);
       } else if(!strcmp(argv[i], "-sx")){
         sx = true;
       } else if(!strcmp(argv[i], "-sep")){
@@ -344,7 +353,7 @@ static int runput(int argc, char **argv){
     vsiz = strlen(value);
     vbuf = tcmemdup(value, vsiz);
   }
-  int rv = procput(host, port, kbuf, ksiz, vbuf, vsiz, dmode);
+  int rv = procput(host, port, kbuf, ksiz, vbuf, vsiz, dmode, shlw);
   tcfree(vbuf);
   tcfree(kbuf);
   return rv;
@@ -770,6 +779,7 @@ static int runimporttsv(int argc, char **argv){
   int port = TTDEFPORT;
   bool nr = false;
   bool sc = false;
+  int sep = -1;
   for(int i = 2; i < argc; i++){
     if(!host && argv[i][0] == '-'){
       if(!strcmp(argv[i], "-port")){
@@ -779,6 +789,9 @@ static int runimporttsv(int argc, char **argv){
         nr = true;
       } else if(!strcmp(argv[i], "-sc")){
         sc = true;
+      } else if(!strcmp(argv[i], "-sep")){
+        if(++i >= argc) usage();
+        sep = sepstrtochr(argv[i]);
       } else {
         usage();
       }
@@ -791,7 +804,7 @@ static int runimporttsv(int argc, char **argv){
     }
   }
   if(!host) usage();
-  int rv = procimporttsv(host, port, file, nr, sc);
+  int rv = procimporttsv(host, port, file, nr, sc, sep);
   return rv;
 }
 
@@ -986,7 +999,7 @@ static int procinform(const char *host, int port, bool st){
 
 /* perform put command */
 static int procput(const char *host, int port, const char *kbuf, int ksiz,
-                   const char *vbuf, int vsiz, int dmode){
+                   const char *vbuf, int vsiz, int dmode, int shlw){
   TCRDB *rdb = tcrdbnew();
   if(!myopen(rdb, host, port)){
     printerr(rdb);
@@ -994,25 +1007,52 @@ static int procput(const char *host, int port, const char *kbuf, int ksiz,
     return 1;
   }
   bool err = false;
+  int inum;
+  double dnum;
   switch(dmode){
-  case -1:
-    if(!tcrdbputkeep(rdb, kbuf, ksiz, vbuf, vsiz)){
-      printerr(rdb);
-      err = true;
-    }
-    break;
-  case 1:
-    if(!tcrdbputcat(rdb, kbuf, ksiz, vbuf, vsiz)){
-      printerr(rdb);
-      err = true;
-    }
-    break;
-  default:
-    if(!tcrdbput(rdb, kbuf, ksiz, vbuf, vsiz)){
-      printerr(rdb);
-      err = true;
-    }
-    break;
+    case -1:
+      if(!tcrdbputkeep(rdb, kbuf, ksiz, vbuf, vsiz)){
+        printerr(rdb);
+        err = true;
+      }
+      break;
+    case 1:
+      if(!tcrdbputcat(rdb, kbuf, ksiz, vbuf, vsiz)){
+        printerr(rdb);
+        err = true;
+      }
+      break;
+    case 10:
+      inum = tcrdbaddint(rdb, kbuf, ksiz, tcatoi(vbuf));
+      if(inum == INT_MIN){
+        printerr(rdb);
+        err = true;
+      } else {
+        printf("%d\n", inum);
+      }
+      break;
+    case 11:
+      dnum = tcrdbadddouble(rdb, kbuf, ksiz, tcatof(vbuf));
+      if(isnan(dnum)){
+        printerr(rdb);
+        err = true;
+      } else {
+        printf("%.6f\n", dnum);
+      }
+      break;
+    default:
+      if(shlw >= 0){
+        if(!tcrdbputshl(rdb, kbuf, ksiz, vbuf, vsiz, shlw)){
+          printerr(rdb);
+          err = true;
+        }
+      } else {
+        if(!tcrdbput(rdb, kbuf, ksiz, vbuf, vsiz)){
+          printerr(rdb);
+          err = true;
+        }
+      }
+      break;
   }
   if(!tcrdbclose(rdb)){
     if(!err) printerr(rdb);
@@ -1327,7 +1367,8 @@ static int procmisc(const char *host, int port, const char *func, int opts,
 
 
 /* perform importtsv command */
-static int procimporttsv(const char *host, int port, const char *file, bool nr, bool sc){
+static int procimporttsv(const char *host, int port, const char *file, bool nr,
+                         bool sc, int sep){
   FILE *ifp = file ? fopen(file, "rb") : stdin;
   if(!ifp){
     fprintf(stderr, "%s: could not open\n", file ? file : "(stdin)");
@@ -1351,17 +1392,26 @@ static int procimporttsv(const char *host, int port, const char *file, bool nr, 
     }
     *pv = '\0';
     if(sc) tcstrtolower(line);
+    char *vbuf;
+    int vsiz;
+    if(sep > 0){
+      vbuf = strtozsv(pv + 1, sep, &vsiz);
+    } else {
+      vsiz = strlen(pv + 1);
+      vbuf = tcmemdup(pv + 1, vsiz);
+    }
     if(nr){
-      if(!tcrdbputnr2(rdb, line, pv + 1)){
+      if(!tcrdbputnr(rdb, line, pv - line, vbuf, vsiz)){
         printerr(rdb);
         err = true;
       }
     } else {
-      if(!tcrdbput2(rdb, line, pv + 1)){
+      if(!tcrdbput(rdb, line, pv - line, vbuf, vsiz)){
         printerr(rdb);
         err = true;
       }
     }
+    tcfree(vbuf);
     tcfree(line);
     if(cnt > 0 && cnt % 100 == 0){
       putchar('.');
@@ -1524,7 +1574,7 @@ static int prochttp(const char *url, TCMAP *hmap, bool ih){
 static int procversion(void){
   printf("Tokyo Tyrant version %s (%d:%s) for %s\n",
          ttversion, _TT_LIBVER, _TT_PROTVER, TTSYSNAME);
-  printf("Copyright (C) 2007-2009 Mikio Hirabayashi\n");
+  printf("Copyright (C) 2007-2010 Mikio Hirabayashi\n");
   return 0;
 }
 

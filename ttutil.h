@@ -1,6 +1,6 @@
 /*************************************************************************************************
  * The utility API of Tokyo Tyrant
- *                                                      Copyright (C) 2006-2009 Mikio Hirabayashi
+ *                                                               Copyright (C) 2006-2010 FAL Labs
  * This file is part of Tokyo Tyrant.
  * Tokyo Tyrant is free software; you can redistribute it and/or modify it under the terms of
  * the GNU Lesser General Public License as published by the Free Software Foundation; either
@@ -28,10 +28,11 @@ __TTUTIL_CLINKAGEBEGIN
 
 
 #include <tcutil.h>
-#include <stdlib.h>
-#include <stdbool.h>
-#include <stdint.h>
-#include <time.h>
+#include <tchdb.h>
+#include <tcbdb.h>
+#include <tcfdb.h>
+#include <tctdb.h>
+#include <tcadb.h>
 #include <pthread.h>
 
 
@@ -50,6 +51,7 @@ typedef struct {                         /* type of structure for a socket */
   char *rp;                              /* reading pointer */
   char *ep;                              /* end pointer */
   bool end;                              /* end flag */
+  double to;                             /* timeout */
   double dl;                             /* deadline time */
 } TTSOCK;
 
@@ -120,6 +122,14 @@ int ttacceptsockunix(int fd);
    `fd' specifies the file descriptor.
    If successful, the return value is true, else, it is false. */
 bool ttclosesock(int fd);
+
+
+/* Wait an I/O event of a socket.
+   `fd' specifies the file descriptor.
+   `mode' specifies the kind of events; 0 for reading, 1 for writing, 2 for exception.
+   `timeout' specifies the timeout in seconds.
+   If successful, the return value is true, else, it is false. */
+bool ttwaitsock(int fd, int mode, double timeout);
 
 
 /* Create a socket object.
@@ -444,8 +454,8 @@ char *ttbreakservexpr(const char *expr, int *pp);
  *************************************************************************************************/
 
 
-#define _TT_VERSION    "1.1.33"
-#define _TT_LIBVER     316
+#define _TT_VERSION    "1.1.41"
+#define _TT_LIBVER     324
 #define _TT_PROTVER    "0.91"
 
 

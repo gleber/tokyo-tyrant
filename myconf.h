@@ -1,6 +1,6 @@
 /*************************************************************************************************
  * System-dependent configurations of Tokyo Tyrant
- *                                                      Copyright (C) 2006-2009 Mikio Hirabayashi
+ *                                                               Copyright (C) 2006-2010 FAL Labs
  * This file is part of Tokyo Tyrant.
  * Tokyo Tyrant is free software; you can redistribute it and/or modify it under the terms of
  * the GNU Lesser General Public License as published by the Free Software Foundation; either
@@ -44,7 +44,7 @@
 #define _SYS_OPENBSD_
 #define TTSYSNAME   "OpenBSD"
 
-#elif defined(__sun__)
+#elif defined(__sun__) || defined(__sun)
 
 #define _SYS_SUNOS_
 #define TTSYSNAME   "SunOS"
@@ -196,6 +196,7 @@
 #include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/select.h>
 #include <fcntl.h>
 #include <dirent.h>
 #include <aio.h>
@@ -241,10 +242,9 @@ typedef struct { int portev_object; } port_event_t;
  *************************************************************************************************/
 
 
-#define sizeof(a)      ((int)sizeof(a))
-
 #if defined(_SYS_FREEBSD_) || defined(_SYS_NETBSD_) || defined(_SYS_OPENBSD_)
 #define nan(TC_a)      strtod("nan", NULL)
+#define nanl(TC_a)     ((long double)strtod("nan", NULL))
 #endif
 
 int _tt_dummyfunc(void);

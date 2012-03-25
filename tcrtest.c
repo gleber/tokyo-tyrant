@@ -1,6 +1,6 @@
 /*************************************************************************************************
  * The test cases of the remote database API
- *                                                      Copyright (C) 2006-2009 Mikio Hirabayashi
+ *                                                               Copyright (C) 2006-2010 FAL Labs
  * This file is part of Tokyo Tyrant.
  * Tokyo Tyrant is free software; you can redistribute it and/or modify it under the terms of
  * the GNU Lesser General Public License as published by the Free Software Foundation; either
@@ -508,7 +508,7 @@ static int procread(const char *host, int port, int cnum, int tout, int mul, boo
     }
   }
   TCRDB *rdb = rdbs[0];
-  TCMAP *recs = mul > 1 ? tcmapnew() : NULL;
+  TCMAP *recs = (mul > 1) ? tcmapnew() : NULL;
   int rnum = tcrdbrnum(rdb);
   for(int i = 1; i <= rnum; i++){
     char kbuf[RECBUFSIZ];
@@ -807,7 +807,7 @@ static int procmisc(const char *host, int port, int cnum, int tout, int rnum){
     }
     if(rnum > 250) putchar('.');
   }
-  if(rnum > 250) iprintf(" (%08d)\n", sizeof(words) / sizeof(*words));
+  if(rnum > 250) iprintf(" (%08d)\n", (int)(sizeof(words) / sizeof(*words)));
   iprintf("random erasing:\n");
   for(int i = 1; i <= rnum; i++){
     char kbuf[RECBUFSIZ];
@@ -930,13 +930,13 @@ static int procmisc(const char *host, int port, int cnum, int tout, int rnum){
     int ksiz = sprintf(kbuf, "(%d)", i);
     const char *name;
     switch(myrand(7)){
-    default: name = "put"; break;
-    case 1: name = "putkeep"; break;
-    case 2: name = "putcat"; break;
-    case 3: name = "out"; break;
-    case 4: name = "get"; break;
-    case 5: name = "iterinit"; break;
-    case 6: name = "iternext"; break;
+      default: name = "put"; break;
+      case 1: name = "putkeep"; break;
+      case 2: name = "putcat"; break;
+      case 3: name = "out"; break;
+      case 4: name = "get"; break;
+      case 5: name = "iterinit"; break;
+      case 6: name = "iternext"; break;
     }
     int vsiz;
     char *vbuf = tcrdbext(rdb, name, 0, kbuf, ksiz, kbuf, ksiz, &vsiz);
@@ -958,9 +958,9 @@ static int procmisc(const char *host, int port, int cnum, int tout, int rnum){
     if(myrand(10) == 0){
       const char *name;
       switch(myrand(3)){
-      default: name = "putlist"; break;
-      case 1: name = "outlist"; break;
-      case 2: name = "getlist"; break;
+        default: name = "putlist"; break;
+        case 1: name = "outlist"; break;
+        case 2: name = "getlist"; break;
       }
       TCLIST *res = tcrdbmisc(rdb, name, 0, args);
       if(res){
@@ -1046,125 +1046,125 @@ static int procwicked(const char *host, int port, int cnum, int tout, int rnum){
     vbuf[vsiz] = '\0';
     char *rbuf;
     switch(myrand(16)){
-    case 0:
-      putchar('0');
-      if(!tcrdbput(rdb, kbuf, ksiz, vbuf, vsiz)){
-        eprint(rdb, __LINE__, "tcrdbput");
-        err = true;
-      }
-      tcmapput(map, kbuf, ksiz, vbuf, vsiz);
-      break;
-    case 1:
-      putchar('1');
-      if(!tcrdbput2(rdb, kbuf, vbuf)){
-        eprint(rdb, __LINE__, "tcrdbput2");
-        err = true;
-      }
-      tcmapput2(map, kbuf, vbuf);
-      break;
-    case 2:
-      putchar('2');
-      tcrdbputkeep(rdb, kbuf, ksiz, vbuf, vsiz);
-      tcmapputkeep(map, kbuf, ksiz, vbuf, vsiz);
-      break;
-    case 3:
-      putchar('3');
-      tcrdbputkeep2(rdb, kbuf, vbuf);
-      tcmapputkeep2(map, kbuf, vbuf);
-      break;
-    case 4:
-      putchar('4');
-      if(!tcrdbputcat(rdb, kbuf, ksiz, vbuf, vsiz)){
-        eprint(rdb, __LINE__, "tcrdbputcat");
-        err = true;
-      }
-      tcmapputcat(map, kbuf, ksiz, vbuf, vsiz);
-      break;
-    case 5:
-      putchar('5');
-      if(!tcrdbputcat2(rdb, kbuf, vbuf)){
-        eprint(rdb, __LINE__, "tcrdbputcat2");
-        err = true;
-      }
-      tcmapputcat2(map, kbuf, vbuf);
-      break;
-    case 6:
-      putchar('6');
-      if(myrand(10) == 0){
-        if(!tcrdbputnr(rdb, kbuf, ksiz, vbuf, vsiz)){
-          eprint(rdb, __LINE__, "tcrdbputcat");
-          err = true;
-        }
-        if(tcrdbrnum(rdb) < 1){
-          eprint(rdb, __LINE__, "tcrdbrnum");
+      case 0:
+        putchar('0');
+        if(!tcrdbput(rdb, kbuf, ksiz, vbuf, vsiz)){
+          eprint(rdb, __LINE__, "tcrdbput");
           err = true;
         }
         tcmapput(map, kbuf, ksiz, vbuf, vsiz);
-      }
-      break;
-    case 7:
-      putchar('7');
-      if(myrand(10) == 0){
-        if(!tcrdbputnr2(rdb, kbuf, vbuf)){
-          eprint(rdb, __LINE__, "tcrdbputcat2");
-          err = true;
-        }
-        if(tcrdbrnum(rdb) < 1){
-          eprint(rdb, __LINE__, "tcrdbrnum");
+        break;
+      case 1:
+        putchar('1');
+        if(!tcrdbput2(rdb, kbuf, vbuf)){
+          eprint(rdb, __LINE__, "tcrdbput2");
           err = true;
         }
         tcmapput2(map, kbuf, vbuf);
-      }
-      break;
-    case 8:
-      putchar('8');
-      if(myrand(10) == 0){
-        tcrdbout(rdb, kbuf, ksiz);
-        tcmapout(map, kbuf, ksiz);
-      }
-      break;
-    case 9:
-      putchar('9');
-      if(myrand(10) == 0){
-        tcrdbout2(rdb, kbuf);
-        tcmapout2(map, kbuf);
-      }
-      break;
-    case 10:
-      putchar('A');
-      if((rbuf = tcrdbget(rdb, kbuf, ksiz, &vsiz)) != NULL) tcfree(rbuf);
-      break;
-    case 11:
-      putchar('B');
-      if((rbuf = tcrdbget2(rdb, kbuf)) != NULL) tcfree(rbuf);
-      break;
-    case 12:
-      putchar('C');
-      tcrdbvsiz(rdb, kbuf, ksiz);
-      break;
-    case 13:
-      putchar('D');
-      tcrdbvsiz2(rdb, kbuf);
-      break;
-    case 14:
-      putchar('E');
-      if(myrand(rnum / 50) == 0){
-        if(!tcrdbiterinit(rdb)){
-          eprint(rdb, __LINE__, "tcrdbiterinit");
+        break;
+      case 2:
+        putchar('2');
+        tcrdbputkeep(rdb, kbuf, ksiz, vbuf, vsiz);
+        tcmapputkeep(map, kbuf, ksiz, vbuf, vsiz);
+        break;
+      case 3:
+        putchar('3');
+        tcrdbputkeep2(rdb, kbuf, vbuf);
+        tcmapputkeep2(map, kbuf, vbuf);
+        break;
+      case 4:
+        putchar('4');
+        if(!tcrdbputcat(rdb, kbuf, ksiz, vbuf, vsiz)){
+          eprint(rdb, __LINE__, "tcrdbputcat");
           err = true;
         }
-      }
-      for(int j = myrand(rnum) / 1000 + 1; j >= 0; j--){
-        int iksiz;
-        char *ikbuf = tcrdbiternext(rdb, &iksiz);
-        if(ikbuf) tcfree(ikbuf);
-      }
-      break;
-    default:
-      putchar('@');
-      if(myrand(10000) == 0) srand((unsigned int)(tctime() * 1000) % UINT_MAX);
-      rdb = rdbs[myrand(rnum)%cnum];
-      break;
+        tcmapputcat(map, kbuf, ksiz, vbuf, vsiz);
+        break;
+      case 5:
+        putchar('5');
+        if(!tcrdbputcat2(rdb, kbuf, vbuf)){
+          eprint(rdb, __LINE__, "tcrdbputcat2");
+          err = true;
+        }
+        tcmapputcat2(map, kbuf, vbuf);
+        break;
+      case 6:
+        putchar('6');
+        if(myrand(10) == 0){
+          if(!tcrdbputnr(rdb, kbuf, ksiz, vbuf, vsiz)){
+            eprint(rdb, __LINE__, "tcrdbputcat");
+            err = true;
+          }
+          if(tcrdbrnum(rdb) < 1){
+            eprint(rdb, __LINE__, "tcrdbrnum");
+            err = true;
+          }
+          tcmapput(map, kbuf, ksiz, vbuf, vsiz);
+        }
+        break;
+      case 7:
+        putchar('7');
+        if(myrand(10) == 0){
+          if(!tcrdbputnr2(rdb, kbuf, vbuf)){
+            eprint(rdb, __LINE__, "tcrdbputcat2");
+            err = true;
+          }
+          if(tcrdbrnum(rdb) < 1){
+            eprint(rdb, __LINE__, "tcrdbrnum");
+            err = true;
+          }
+          tcmapput2(map, kbuf, vbuf);
+        }
+        break;
+      case 8:
+        putchar('8');
+        if(myrand(10) == 0){
+          tcrdbout(rdb, kbuf, ksiz);
+          tcmapout(map, kbuf, ksiz);
+        }
+        break;
+      case 9:
+        putchar('9');
+        if(myrand(10) == 0){
+          tcrdbout2(rdb, kbuf);
+          tcmapout2(map, kbuf);
+        }
+        break;
+      case 10:
+        putchar('A');
+        if((rbuf = tcrdbget(rdb, kbuf, ksiz, &vsiz)) != NULL) tcfree(rbuf);
+        break;
+      case 11:
+        putchar('B');
+        if((rbuf = tcrdbget2(rdb, kbuf)) != NULL) tcfree(rbuf);
+        break;
+      case 12:
+        putchar('C');
+        tcrdbvsiz(rdb, kbuf, ksiz);
+        break;
+      case 13:
+        putchar('D');
+        tcrdbvsiz2(rdb, kbuf);
+        break;
+      case 14:
+        putchar('E');
+        if(myrand(rnum / 50) == 0){
+          if(!tcrdbiterinit(rdb)){
+            eprint(rdb, __LINE__, "tcrdbiterinit");
+            err = true;
+          }
+        }
+        for(int j = myrand(rnum) / 1000 + 1; j >= 0; j--){
+          int iksiz;
+          char *ikbuf = tcrdbiternext(rdb, &iksiz);
+          if(ikbuf) tcfree(ikbuf);
+        }
+        break;
+      default:
+        putchar('@');
+        if(myrand(10000) == 0) srand((unsigned int)(tctime() * 1000) % UINT_MAX);
+        rdb = rdbs[myrand(rnum)%cnum];
+        break;
     }
     if(i % 50 == 0) iprintf(" (%08d)\n", i);
   }
@@ -1359,24 +1359,24 @@ static int proctable(const char *host, int port, int cnum, int tout, int rnum, i
         tcmapput(cols, "text", 4, vbuf, wp - vbuf);
       }
       switch(myrand(4)){
-      default:
-        if(!tcrdbtblput(rdb, pkbuf, pksiz, cols)){
-          eprint(rdb, __LINE__, "tcrdbtblput");
-          err = true;
-        }
-        break;
-      case 1:
-        if(!tcrdbtblputkeep(rdb, pkbuf, pksiz, cols)){
-          eprint(rdb, __LINE__, "tcrdbtblputkeep");
-          err = true;
-        }
-        break;
-      case 2:
-        if(!tcrdbtblputcat(rdb, pkbuf, pksiz, cols)){
-          eprint(rdb, __LINE__, "tcrdbtblput");
-          err = true;
-        }
-        break;
+        default:
+          if(!tcrdbtblput(rdb, pkbuf, pksiz, cols)){
+            eprint(rdb, __LINE__, "tcrdbtblput");
+            err = true;
+          }
+          break;
+        case 1:
+          if(!tcrdbtblputkeep(rdb, pkbuf, pksiz, cols)){
+            eprint(rdb, __LINE__, "tcrdbtblputkeep");
+            err = true;
+          }
+          break;
+        case 2:
+          if(!tcrdbtblputcat(rdb, pkbuf, pksiz, cols)){
+            eprint(rdb, __LINE__, "tcrdbtblput");
+            err = true;
+          }
+          break;
       }
       tcmapdel(cols);
       if(rnum > 250 && i % (rnum / 250) == 0){
@@ -1452,8 +1452,19 @@ static int proctable(const char *host, int port, int cnum, int tout, int rnum, i
         for(int j = 0; j < num; j++){
           qrys[j] = qry;
         }
-        TCLIST *res = tcrdbmetasearch(qrys, num, RDBMSUNION + myrand(3));
-        if(num > 0){
+        if(myrand(3) == 0){
+          TCLIST *res = tcrdbparasearch(qrys, num);
+          for(int j = 0; j < 3 && j < tclistnum(res); j++){
+            TCMAP *cols = tcrdbqryrescols(res, j);
+            if(!tcmapget2(cols, "")){
+              eprint(rdb, __LINE__, "(validation)");
+              err = true;
+            }
+            tcmapdel(cols);
+          }
+          tclistdel(res);
+        } else {
+          TCLIST *res = tcrdbmetasearch(qrys, num, RDBMSUNION + myrand(3));
           for(int j = 0; j < 3 && j < tclistnum(res); j++){
             int pksiz;
             const char *pkbuf = tclistval(res, j, &pksiz);
@@ -1465,8 +1476,8 @@ static int proctable(const char *host, int port, int cnum, int tout, int rnum, i
               err = true;
             }
           }
+          tclistdel(res);
         }
-        tclistdel(res);
       } else {
         TCLIST *res = tcrdbqrysearch(qry);
         tclistdel(res);

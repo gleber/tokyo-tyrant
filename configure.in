@@ -7,11 +7,11 @@
 #================================================================
 
 # Package name
-AC_INIT(tokyotyrant, 1.1.33)
+AC_INIT(tokyotyrant, 1.1.41)
 
 # Package information
 MYLIBVER=3
-MYLIBREV=16
+MYLIBREV=24
 MYPROTVER="0.91"
 
 # Targets
@@ -24,7 +24,7 @@ MYMAN1FILES="ttserver.1 ttulmgr.1 ttultest.1 tcrtest.1 tcrmttest.1 tcrmgr.1"
 MYMAN3FILES="ttutil.3 tculog.3 tcrdb.3"
 MYMAN8FILES="ttservctl.8"
 MYSCREXTFILES="ext"
-MYDOCUMENTFILES="COPYING ChangeLog THANKS doc"
+MYDOCUMENTFILES="COPYING ChangeLog THANKS doc tokyotyrant.idl"
 MYPCFILES="tokyotyrant.pc"
 
 # Building flags
@@ -136,6 +136,7 @@ if test -n "$with_tc"
 then
   MYCPPFLAGS="$MYCPPFLAGS -I$with_tc/include"
   MYLDFLAGS="$MYLDFLAGS -L$with_tc/lib"
+  MYRUNPATH="$MYRUNPATH:$with_tc/lib"
   CPATH="$CPATH:$with_tc/include"
   LIBRARY_PATH="$LIBRARY_PATH:$with_tc/lib"
   LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$with_tc/lib"
@@ -148,6 +149,7 @@ if test -n "$with_zlib"
 then
   MYCPPFLAGS="$MYCPPFLAGS -I$with_zlib/include"
   MYLDFLAGS="$MYLDFLAGS -L$with_zlib/lib"
+  MYRUNPATH="$MYRUNPATH:$with_zlib/lib"
   CPATH="$CPATH:$with_zlib/include"
   LIBRARY_PATH="$LIBRARY_PATH:$with_zlib/lib"
   LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$with_zlib/lib"
@@ -160,6 +162,7 @@ if test -n "$with_bzip"
 then
   MYCPPFLAGS="$MYCPPFLAGS -I$with_bzip/include"
   MYLDFLAGS="$MYLDFLAGS -L$with_bzip/lib"
+  MYRUNPATH="$MYRUNPATH:$with_bzip/lib"
   CPATH="$CPATH:$with_bzip/include"
   LIBRARY_PATH="$LIBRARY_PATH:$with_bzip/lib"
   LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$with_bzip/lib"
@@ -172,6 +175,7 @@ if test -n "$with_lua"
 then
   MYCPPFLAGS="$MYCPPFLAGS -I$with_lua/include"
   MYLDFLAGS="$MYLDFLAGS -L$with_lua/lib"
+  MYRUNPATH="$MYRUNPATH:$with_lua/lib"
   CPATH="$CPATH:$with_lua/include"
   LIBRARY_PATH="$LIBRARY_PATH:$with_lua/lib"
   LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$with_lua/lib"

@@ -1,6 +1,6 @@
 /*************************************************************************************************
  * The utility API of Tokyo Tyrant
- *                                                      Copyright (C) 2006-2009 Mikio Hirabayashi
+ *                                                               Copyright (C) 2006-2010 FAL Labs
  * This file is part of Tokyo Tyrant.
  * Tokyo Tyrant is free software; you can redistribute it and/or modify it under the terms of
  * the GNU Lesser General Public License as published by the Free Software Foundation; either
@@ -110,10 +110,11 @@ int ttopensock(const char *addr, int port){
     int ocs = PTHREAD_CANCEL_DISABLE;
     pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, &ocs);
     int rv = connect(fd, (struct sockaddr *)&sain, sizeof(sain));
+    int en = errno;
     pthread_setcancelstate(ocs, NULL);
     if(rv == 0) return fd;
-    if(errno != EINTR && errno != EAGAIN && errno != EINPROGRESS && errno != EALREADY &&
-       errno != ETIMEDOUT) break;
+    if(en != EINTR && en != EAGAIN && en != EINPROGRESS && en != EALREADY && en != ETIMEDOUT)
+      break;
   } while(tctime() <= dl);
   close(fd);
   return -1;
@@ -143,10 +144,11 @@ int ttopensockunix(const char *path){
     int ocs = PTHREAD_CANCEL_DISABLE;
     pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, &ocs);
     int rv = connect(fd, (struct sockaddr *)&saun, sizeof(saun));
+    int en = errno;
     pthread_setcancelstate(ocs, NULL);
     if(rv == 0) return fd;
-    if(errno != EINTR && errno != EAGAIN && errno != EINPROGRESS && errno != EALREADY &&
-       errno != ETIMEDOUT) break;
+    if(en != EINTR && en != EAGAIN && en != EINPROGRESS && en != EALREADY && en != ETIMEDOUT)
+      break;
   } while(tctime() <= dl);
   close(fd);
   return -1;
@@ -262,6 +264,37 @@ bool ttclosesock(int fd){
 }
 
 
+/* Wait an I/O event of a socket. */
+bool ttwaitsock(int fd, int mode, double timeout){
+  assert(fd >= 0 && mode >= 0 && timeout >= 0);
+  while(true){
+    fd_set set;
+    FD_ZERO(&set);
+    FD_SET(fd, &set);
+    double integ, fract;
+    fract = modf(timeout, &integ);
+    struct timespec ts;
+    ts.tv_sec = integ;
+    ts.tv_nsec = fract * 1000000000.0;
+    int rv = -1;
+    switch(mode){
+      case 0:
+        rv = pselect(fd + 1, &set, NULL, NULL, &ts, NULL);
+        break;
+      case 1:
+        rv = pselect(fd + 1, NULL, &set, NULL, &ts, NULL);
+        break;
+      case 2:
+        rv = pselect(fd + 1, NULL, NULL, &set, &ts, NULL);
+        break;
+    }
+    if(rv > 0) return true;
+    if(rv == 0 || errno != EINVAL) break;
+  }
+  return false;
+}
+
+
 /* Create a socket object. */
 TTSOCK *ttsocknew(int fd){
   assert(fd >= 0);
@@ -270,6 +303,7 @@ TTSOCK *ttsocknew(int fd){
   sock->rp = sock->buf;
   sock->ep = sock->buf;
   sock->end = false;
+  sock->to = 0.0;
   sock->dl = HUGE_VAL;
   return sock;
 }
@@ -284,7 +318,8 @@ void ttsockdel(TTSOCK *sock){
 
 /* Set the lifetime of a socket object. */
 void ttsocksetlife(TTSOCK *sock, double lifetime){
-  assert(sock);
+  assert(sock && lifetime >= 0);
+  sock->to = lifetime >= INT_MAX ? 0.0 : lifetime;
   sock->dl = tctime() + lifetime;
 }
 
@@ -296,25 +331,30 @@ bool ttsocksend(TTSOCK *sock, const void *buf, int size){
   do {
     int ocs = PTHREAD_CANCEL_DISABLE;
     pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, &ocs);
+    if(sock->to > 0.0 && !ttwaitsock(sock->fd, 1, sock->to)){
+      pthread_setcancelstate(ocs, NULL);
+      return false;
+    }
     int wb = send(sock->fd, rp, size, 0);
+    int en = errno;
     pthread_setcancelstate(ocs, NULL);
     switch(wb){
-    case -1:
-      if(errno != EINTR && errno != EAGAIN && errno != EWOULDBLOCK){
-        sock->end = true;
-        return false;
-      }
-      if(tctime() > sock->dl){
-        sock->end = true;
-        return false;
-      }
-      break;
-    case 0:
-      break;
-    default:
-      rp += wb;
-      size -= wb;
-      break;
+      case -1:
+        if(en != EINTR && en != EAGAIN && en != EWOULDBLOCK){
+          sock->end = true;
+          return false;
+        }
+        if(tctime() > sock->dl){
+          sock->end = true;
+          return false;
+        }
+        break;
+      case 0:
+        break;
+      default:
+        rp += wb;
+        size -= wb;
+        break;
     }
   } while(size > 0);
   return true;
@@ -346,74 +386,74 @@ bool ttsockprintf(TTSOCK *sock, const char *format, ...){
       int tlen;
       char *tmp, tbuf[TTNUMBUFSIZ*2];
       switch(*format){
-      case 's':
-        tmp = va_arg(ap, char *);
-        if(!tmp) tmp = "(null)";
-        tcxstrcat2(xstr, tmp);
-        break;
-      case 'd':
-        if(lnum >= 2){
-          tlen = sprintf(tbuf, cbuf, va_arg(ap, long long));
-        } else if(lnum >= 1){
-          tlen = sprintf(tbuf, cbuf, va_arg(ap, long));
-        } else {
-          tlen = sprintf(tbuf, cbuf, va_arg(ap, int));
-        }
-        tcxstrcat(xstr, tbuf, tlen);
-        break;
-      case 'o': case 'u': case 'x': case 'X': case 'c':
-        if(lnum >= 2){
-          tlen = sprintf(tbuf, cbuf, va_arg(ap, unsigned long long));
-        } else if(lnum >= 1){
-          tlen = sprintf(tbuf, cbuf, va_arg(ap, unsigned long));
-        } else {
-          tlen = sprintf(tbuf, cbuf, va_arg(ap, unsigned int));
-        }
-        tcxstrcat(xstr, tbuf, tlen);
-        break;
-      case 'e': case 'E': case 'f': case 'g': case 'G':
-        if(lnum >= 1){
-          tlen = sprintf(tbuf, cbuf, va_arg(ap, long double));
-        } else {
-          tlen = sprintf(tbuf, cbuf, va_arg(ap, double));
-        }
-        tcxstrcat(xstr, tbuf, tlen);
-        break;
-      case '@':
-        tmp = va_arg(ap, char *);
-        if(!tmp) tmp = "(null)";
-        while(*tmp){
-          switch(*tmp){
-          case '&': tcxstrcat(xstr, "&amp;", 5); break;
-          case '<': tcxstrcat(xstr, "&lt;", 4); break;
-          case '>': tcxstrcat(xstr, "&gt;", 4); break;
-          case '"': tcxstrcat(xstr, "&quot;", 6); break;
-          default:
-            if(!((*tmp >= 0 && *tmp <= 0x8) || (*tmp >= 0x0e && *tmp <= 0x1f)))
-              tcxstrcat(xstr, tmp, 1);
-            break;
-          }
-          tmp++;
-        }
-        break;
-      case '?':
-        tmp = va_arg(ap, char *);
-        if(!tmp) tmp = "(null)";
-        while(*tmp){
-          unsigned char c = *(unsigned char *)tmp;
-          if((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
-             (c >= '0' && c <= '9') || (c != '\0' && strchr("_-.", c))){
-            tcxstrcat(xstr, tmp, 1);
+        case 's':
+          tmp = va_arg(ap, char *);
+          if(!tmp) tmp = "(null)";
+          tcxstrcat2(xstr, tmp);
+          break;
+        case 'd':
+          if(lnum >= 2){
+            tlen = sprintf(tbuf, cbuf, va_arg(ap, long long));
+          } else if(lnum >= 1){
+            tlen = sprintf(tbuf, cbuf, va_arg(ap, long));
           } else {
-            tlen = sprintf(tbuf, "%%%02X", c);
-            tcxstrcat(xstr, tbuf, tlen);
+            tlen = sprintf(tbuf, cbuf, va_arg(ap, int));
           }
-          tmp++;
-        }
-        break;
-      case '%':
-        tcxstrcat(xstr, "%", 1);
-        break;
+          tcxstrcat(xstr, tbuf, tlen);
+          break;
+        case 'o': case 'u': case 'x': case 'X': case 'c':
+          if(lnum >= 2){
+            tlen = sprintf(tbuf, cbuf, va_arg(ap, unsigned long long));
+          } else if(lnum >= 1){
+            tlen = sprintf(tbuf, cbuf, va_arg(ap, unsigned long));
+          } else {
+            tlen = sprintf(tbuf, cbuf, va_arg(ap, unsigned int));
+          }
+          tcxstrcat(xstr, tbuf, tlen);
+          break;
+        case 'e': case 'E': case 'f': case 'g': case 'G':
+          if(lnum >= 1){
+            tlen = sprintf(tbuf, cbuf, va_arg(ap, long double));
+          } else {
+            tlen = sprintf(tbuf, cbuf, va_arg(ap, double));
+          }
+          tcxstrcat(xstr, tbuf, tlen);
+          break;
+        case '@':
+          tmp = va_arg(ap, char *);
+          if(!tmp) tmp = "(null)";
+          while(*tmp){
+            switch(*tmp){
+              case '&': tcxstrcat(xstr, "&amp;", 5); break;
+              case '<': tcxstrcat(xstr, "&lt;", 4); break;
+              case '>': tcxstrcat(xstr, "&gt;", 4); break;
+              case '"': tcxstrcat(xstr, "&quot;", 6); break;
+              default:
+                if(!((*tmp >= 0 && *tmp <= 0x8) || (*tmp >= 0x0e && *tmp <= 0x1f)))
+                  tcxstrcat(xstr, tmp, 1);
+                break;
+            }
+            tmp++;
+          }
+          break;
+        case '?':
+          tmp = va_arg(ap, char *);
+          if(!tmp) tmp = "(null)";
+          while(*tmp){
+            unsigned char c = *(unsigned char *)tmp;
+            if((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+               (c >= '0' && c <= '9') || (c != '\0' && strchr("_-.", c))){
+              tcxstrcat(xstr, tmp, 1);
+            } else {
+              tlen = sprintf(tbuf, "%%%02X", c);
+              tcxstrcat(xstr, tbuf, tlen);
+            }
+            tmp++;
+          }
+          break;
+        case '%':
+          tcxstrcat(xstr, "%", 1);
+          break;
       }
     } else {
       tcxstrcat(xstr, format, 1);
@@ -454,10 +494,16 @@ bool ttsockrecv(TTSOCK *sock, char *buf, int size){
 int ttsockgetc(TTSOCK *sock){
   assert(sock);
   if(sock->rp < sock->ep) return *(unsigned char *)(sock->rp++);
+  int en;
   do {
     int ocs = PTHREAD_CANCEL_DISABLE;
     pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, &ocs);
+    if(sock->to > 0.0 && !ttwaitsock(sock->fd, 0, sock->to)){
+      pthread_setcancelstate(ocs, NULL);
+      return -1;
+    }
     int rv = recv(sock->fd, sock->buf, TTIOBUFSIZ, 0);
+    en = errno;
     pthread_setcancelstate(ocs, NULL);
     if(rv > 0){
       sock->rp = sock->buf + 1;
@@ -467,7 +513,7 @@ int ttsockgetc(TTSOCK *sock){
       sock->end = true;
       return -1;
     }
-  } while((errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) && tctime() <= sock->dl);
+  } while((en == EINTR || en == EAGAIN || en == EWOULDBLOCK) && tctime() <= sock->dl);
   sock->end = true;
   return -1;
 }
@@ -1010,6 +1056,27 @@ bool ttservstart(TTSERV *serv){
           } else {
             err = true;
             ttservlog(serv, TTLOGERROR, "ttacceptsock failed");
+            if(epoll_ctl(epfd, EPOLL_CTL_DEL, lfd, NULL) != 0)
+              ttservlog(serv, TTLOGERROR, "epoll_ctl failed");
+            if(close(lfd) != 0) ttservlog(serv, TTLOGERROR, "close failed");
+            tcsleep(TTWAITWORKER);
+            if(serv->port < 1){
+              lfd = ttopenservsockunix(serv->host);
+              if(lfd == -1) ttservlog(serv, TTLOGERROR, "ttopenservsockunix failed");
+            } else {
+              lfd = ttopenservsock(serv->addr[0] != '\0' ? serv->addr : NULL, serv->port);
+              if(lfd == -1) ttservlog(serv, TTLOGERROR, "ttopenservsock failed");
+            }
+            if(lfd >= 0){
+              memset(&ev, 0, sizeof(ev));
+              ev.events = EPOLLIN;
+              ev.data.fd = lfd;
+              if(epoll_ctl(epfd, EPOLL_CTL_ADD, lfd, &ev) == 0){
+                ttservlog(serv, TTLOGSYSTEM, "listening restarted");
+              } else {
+                ttservlog(serv, TTLOGERROR, "epoll_ctl failed");
+              }
+            }
           }
         } else {
           int cfd = events[i].data.fd;
@@ -1113,7 +1180,7 @@ bool ttservstart(TTSERV *serv){
     err = true;
     ttservlog(serv, TTLOGERROR, "unlink failed");
   }
-  if(close(lfd) != 0){
+  if(lfd >= 0 && close(lfd) != 0){
     err = true;
     ttservlog(serv, TTLOGERROR, "close failed");
   }
@@ -1360,15 +1427,15 @@ bool ttdaemonize(void){
   fflush(stdout);
   fflush(stderr);
   switch(fork()){
-  case -1: return false;
-  case 0: break;
-  default: _exit(0);
+    case -1: return false;
+    case 0: break;
+    default: _exit(0);
   }
   if(setsid() == -1) return false;
   switch(fork()){
-  case -1: return false;
-  case 0: break;
-  default: _exit(0);
+    case -1: return false;
+    case 0: break;
+    default: _exit(0);
   }
   umask(0);
   if(chdir(MYPATHSTR) == -1) return false;
@@ -1408,32 +1475,32 @@ uint64_t ttstrtots(const char *str){
 /* Get the command name of a command ID number. */
 const char *ttcmdidtostr(int id){
   switch(id){
-  case TTCMDPUT: return "put";
-  case TTCMDPUTKEEP: return "putkeep";
-  case TTCMDPUTCAT: return "putcat";
-  case TTCMDPUTSHL: return "putshl";
-  case TTCMDPUTNR: return "putnr";
-  case TTCMDOUT: return "out";
-  case TTCMDGET: return "get";
-  case TTCMDMGET: return "mget";
-  case TTCMDVSIZ: return "vsiz";
-  case TTCMDITERINIT: return "iterinit";
-  case TTCMDITERNEXT: return "iternext";
-  case TTCMDFWMKEYS: return "fwmkeys";
-  case TTCMDADDINT: return "addint";
-  case TTCMDADDDOUBLE: return "adddouble";
-  case TTCMDEXT: return "ext";
-  case TTCMDSYNC: return "sync";
-  case TTCMDOPTIMIZE: return "optimize";
-  case TTCMDVANISH: return "vanish";
-  case TTCMDCOPY: return "copy";
-  case TTCMDRESTORE: return "restore";
-  case TTCMDSETMST: return "setmst";
-  case TTCMDRNUM: return "rnum";
-  case TTCMDSIZE: return "size";
-  case TTCMDSTAT: return "stat";
-  case TTCMDMISC: return "misc";
-  case TTCMDREPL: return "repl";
+    case TTCMDPUT: return "put";
+    case TTCMDPUTKEEP: return "putkeep";
+    case TTCMDPUTCAT: return "putcat";
+    case TTCMDPUTSHL: return "putshl";
+    case TTCMDPUTNR: return "putnr";
+    case TTCMDOUT: return "out";
+    case TTCMDGET: return "get";
+    case TTCMDMGET: return "mget";
+    case TTCMDVSIZ: return "vsiz";
+    case TTCMDITERINIT: return "iterinit";
+    case TTCMDITERNEXT: return "iternext";
+    case TTCMDFWMKEYS: return "fwmkeys";
+    case TTCMDADDINT: return "addint";
+    case TTCMDADDDOUBLE: return "adddouble";
+    case TTCMDEXT: return "ext";
+    case TTCMDSYNC: return "sync";
+    case TTCMDOPTIMIZE: return "optimize";
+    case TTCMDVANISH: return "vanish";
+    case TTCMDCOPY: return "copy";
+    case TTCMDRESTORE: return "restore";
+    case TTCMDSETMST: return "setmst";
+    case TTCMDRNUM: return "rnum";
+    case TTCMDSIZE: return "size";
+    case TTCMDSTAT: return "stat";
+    case TTCMDMISC: return "misc";
+    case TTCMDREPL: return "repl";
   }
   return "(unknown)";
 }

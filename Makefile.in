@@ -92,7 +92,7 @@ all : $(LIBRARYFILES) $(COMMANDFILES)
 
 clean :
 	rm -rf $(LIBRARYFILES) $(LIBOBJFILES) $(COMMANDFILES) \
-	  *.o a.out check.in check.out gmon.out leak.log words.tsv \
+	  *.o a.out check.in check.out gmon.out *.vlog words.tsv \
 	  casket casket-* casket.* *.tch *.tcb *.tcf *.tct *.idx.* \
 	  *.ulog ulog 1978* 1979* *.rts *.pid *~ hoge moge tako ika
 
@@ -132,6 +132,7 @@ install :
 	cd man && cp -Rf $(MAN8FILES) $(DESTDIR)$(MAN8DIR)
 	mkdir -p $(DESTDIR)$(PCDIR)
 	cp -Rf $(PCFILES) $(DESTDIR)$(PCDIR)
+	[ "$$UID" == 0 ] && ldconfig || true
 	@printf '\n'
 	@printf '#================================================================\n'
 	@printf '# Thanks for using Tokyo Tyrant.\n'
@@ -153,6 +154,7 @@ uninstall :
 	cd $(DESTDIR)$(MAN8DIR) && rm -f $(MAN8FILES)
 	rm -rf $(DESTDIR)$(DATADIR)
 	cd $(DESTDIR)$(PCDIR) && rm -f $(PCFILES)
+	[ "$$UID" == 0 ] && ldconfig || true
 
 
 dist :
@@ -164,11 +166,11 @@ dist :
 
 
 distclean : clean
+	cd example && make clean
 	rm -rf Makefile tokyotyrant.pc config.cache config.log config.status autom4te.cache
 
 
 check :
-	rm -rf casket* ulog
 	$(RUNENV) $(RUNCMD) ./tcrmgr version
 	$(RUNENV) $(RUNCMD) ./tcrtest write -cnum 5 -tout 5 -rnd 127.0.0.1 50000
 	$(RUNENV) $(RUNCMD) ./tcrtest write -cnum 5 -tout 5 -nr -rnd 127.0.0.1 50000
@@ -218,7 +220,6 @@ check :
 	rm -rf ulog ; mkdir -p ulog
 	$(RUNENV) $(RUNCMD) ./ttultest thread -lim 10000 ulog 5 5000
 	$(RUNENV) $(RUNCMD) ./ttultest thread -lim 10000 -as ulog 5 5000
-	rm -rf casket* ulog
 	@printf '\n'
 	@printf '#================================================================\n'
 	@printf '# Checking completed.\n'
@@ -226,9 +227,9 @@ check :
 
 
 check-valgrind :
-	make RUNCMD="valgrind --tool=memcheck --log-fd=1" check | tee leak.log
-	grep ERROR leak.log
-	grep 'at exit' leak.log
+	make RUNCMD="valgrind --tool=memcheck --log-file=%p.vlog" check
+	grep ERROR *.vlog | grep -v ' 0 errors' ; true
+	grep 'at exit' *.vlog | grep -v ' 0 bytes' ; true
 
 
 check-forever :
@@ -278,7 +279,7 @@ libtokyotyrant.so : libtokyotyrant.so.$(LIBVER).$(LIBREV).0
 
 
 libtokyotyrant.$(LIBVER).$(LIBREV).0.dylib : $(LIBOBJFILES)
-	$(CC) -dynamiclib -o $@ \
+	$(CC) $(CFLAGS) -dynamiclib -o $@ \
 	  -install_name $(LIBDIR)/libtokyotyrant.$(LIBVER).dylib \
 	  -current_version $(LIBVER).$(LIBREV).0 -compatibility_version $(LIBVER) \
 	  $(LIBOBJFILES) $(LDFLAGS) $(LIBS)

@@ -1,4 +1,4 @@
-.TH "TTSERVER" 1 "2009-05-06" "Man Page" "Tokyo Tyrant"
+.TH "TTSERVER" 1 "2010-08-05" "Man Page" "Tokyo Tyrant"
 
 .SH NAME
 ttserver \- the server of Tokyo Tyrant
@@ -9,7 +9,7 @@ The command `\fBttserver\fR' runs the server managing a database instance.  Beca
 .PP
 .RS
 .br
-\fBttserver \fR[\fB\-host \fIname\fB\fR]\fB \fR[\fB\-port \fInum\fB\fR]\fB \fR[\fB\-thnum \fInum\fB\fR]\fB \fR[\fB\-tout \fInum\fB\fR]\fB \fR[\fB\-dmn\fR]\fB \fR[\fB\-pid \fIpath\fB\fR]\fB \fR[\fB\-kl\fR]\fB \fR[\fB\-log \fIpath\fB\fR]\fB \fR[\fB\-ld\fR|\fB\-le\fR]\fB \fR[\fB\-ulog \fIpath\fB\fR]\fB \fR[\fB\-ulim \fInum\fB\fR]\fB \fR[\fB\-uas\fR]\fB \fR[\fB\-sid \fInum\fB\fR]\fB \fR[\fB\-mhost \fIname\fB\fR]\fB \fR[\fB\-mport \fInum\fB\fR]\fB \fR[\fB\-rts \fIpath\fB\fR]\fB \fR[\fB\-rcc\fR]\fB \fR[\fB\-skel \fIname\fB\fR]\fB \fR[\fB\-ext \fIpath\fB\fR]\fB \fR[\fB\-extpc \fIname\fB \fIperiod\fB\fR]\fB \fR[\fB\-mask \fIexpr\fB\fR]\fB \fR[\fB\-unmask \fIexpr\fB\fR]\fB \fR[\fB\fIdbname\fB\fR]\fB\fR
+\fBttserver \fR[\fB\-host \fIname\fB\fR]\fB \fR[\fB\-port \fInum\fB\fR]\fB \fR[\fB\-thnum \fInum\fB\fR]\fB \fR[\fB\-tout \fInum\fB\fR]\fB \fR[\fB\-dmn\fR]\fB \fR[\fB\-pid \fIpath\fB\fR]\fB \fR[\fB\-kl\fR]\fB \fR[\fB\-log \fIpath\fB\fR]\fB \fR[\fB\-ld\fR|\fB\-le\fR]\fB \fR[\fB\-ulog \fIpath\fB\fR]\fB \fR[\fB\-ulim \fInum\fB\fR]\fB \fR[\fB\-uas\fR]\fB \fR[\fB\-sid \fInum\fB\fR]\fB \fR[\fB\-mhost \fIname\fB\fR]\fB \fR[\fB\-mport \fInum\fB\fR]\fB \fR[\fB\-rts \fIpath\fB\fR]\fB \fR[\fB\-rcc\fR]\fB \fR[\fB\-skel \fIname\fB\fR]\fB \fR[\fB\-mul \fInum\fB\fR]\fB \fR[\fB\-ext \fIpath\fB\fR]\fB \fR[\fB\-extpc \fIname\fB \fIperiod\fB\fR]\fB \fR[\fB\-mask \fIexpr\fB\fR]\fB \fR[\fB\-unmask \fIexpr\fB\fR]\fB \fR[\fB\fIdbname\fB\fR]\fB\fR
 .RE
 .PP
 Options feature the following.
@@ -52,6 +52,8 @@ Options feature the following.
 \fB\-rcc\fR : check consistency of replication.
 .br
 \fB\-skel \fIname\fR\fR : specify the name of the skeleton database library.
+.br
+\fB\-mul \fInum\fR\fR : specify the division number of the multiple database mechanism.
 .br
 \fB\-ext \fIpath\fR\fR : specify the script language extension file.
 .br

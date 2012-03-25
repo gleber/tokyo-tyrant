@@ -1,6 +1,6 @@
 /*************************************************************************************************
  * Scripting language extension of Tokyo Tyrant
- *                                                      Copyright (C) 2006-2009 Mikio Hirabayashi
+ *                                                               Copyright (C) 2006-2010 FAL Labs
  * This file is part of Tokyo Tyrant.
  * Tokyo Tyrant is free software; you can redistribute it and/or modify it under the terms of
  * the GNU Lesser General Public License as published by the Free Software Foundation; either
@@ -220,6 +220,7 @@ static int serv_split(lua_State *lua);
 static int serv_codec(lua_State *lua);
 static int serv_hash(lua_State *lua);
 static int serv_bit(lua_State *lua);
+static int serv_strstr(lua_State *lua);
 static int serv_regex(lua_State *lua);
 static int serv_ucs(lua_State *lua);
 static int serv_dist(lua_State *lua);
@@ -303,6 +304,7 @@ void *scrextnew(void **screxts, int thnum, int thid, const char *path,
   lua_register(lua, "_codec", serv_codec);
   lua_register(lua, "_hash", serv_hash);
   lua_register(lua, "_bit", serv_bit);
+  lua_register(lua, "_strstr", serv_strstr);
   lua_register(lua, "_regex", serv_regex);
   lua_register(lua, "_ucs", serv_ucs);
   lua_register(lua, "_dist", serv_dist);
@@ -376,34 +378,34 @@ char *scrextcallmethod(void *scr, const char *name,
   const char *rbuf = NULL;
   size_t rsiz;
   switch(lua_type(lua, 1)){
-  case LUA_TNUMBER:
-  case LUA_TSTRING:
-    rbuf = lua_tolstring(lua, 1, &rsiz);
-    break;
-  case LUA_TBOOLEAN:
-    if(lua_toboolean(lua, 1)){
-      rbuf = "true";
-      rsiz = strlen(rbuf);
-    }
-    break;
-  case LUA_TTABLE:
-    if(lua_objlen(lua, 1) > 0){
-      lua_rawgeti(lua, 1, 1);
-      switch(lua_type(lua, -1)){
-      case LUA_TNUMBER:
-      case LUA_TSTRING:
-        rbuf = lua_tolstring(lua, -1, &rsiz);
-        break;
-      case LUA_TBOOLEAN:
-        if(lua_toboolean(lua, -1)){
-          rbuf = "true";
-          rsiz = strlen(rbuf);
-        }
-        break;
+    case LUA_TNUMBER:
+    case LUA_TSTRING:
+      rbuf = lua_tolstring(lua, 1, &rsiz);
+      break;
+    case LUA_TBOOLEAN:
+      if(lua_toboolean(lua, 1)){
+        rbuf = "true";
+        rsiz = strlen(rbuf);
       }
-      lua_pop(lua, 1);
-    }
-    break;
+      break;
+    case LUA_TTABLE:
+      if(lua_objlen(lua, 1) > 0){
+        lua_rawgeti(lua, 1, 1);
+        switch(lua_type(lua, -1)){
+          case LUA_TNUMBER:
+          case LUA_TSTRING:
+            rbuf = lua_tolstring(lua, -1, &rsiz);
+            break;
+          case LUA_TBOOLEAN:
+            if(lua_toboolean(lua, -1)){
+              rbuf = "true";
+              rsiz = strlen(rbuf);
+            }
+            break;
+        }
+        lua_pop(lua, 1);
+      }
+      break;
   }
   if(!rbuf){
     lua_settop(lua, 0);
@@ -446,7 +448,7 @@ static bool iterrec(const void *kbuf, int ksiz, const void *vbuf, int vsiz, lua_
   lua_pushlstring(lua, vbuf, vsiz);
   bool err = false;
   if(lua_pcall(lua, 2, 1, 0) == 0){
-    if(lua_gettop(lua) < 1 && !lua_toboolean(lua, 1)) err = true;
+    if(lua_gettop(lua) <= top || !lua_toboolean(lua, -1)) err = true;
   } else {
     reporterror(lua);
     err = true;
@@ -871,25 +873,25 @@ static int serv_misc(lua_State *lua){
     size_t asiz;
     int len;
     switch(lua_type(lua, i)){
-    case LUA_TNUMBER:
-    case LUA_TSTRING:
-      aptr = lua_tolstring(lua, i, &asiz);
-      tclistpush(args, aptr, asiz);
-      break;
-    case LUA_TTABLE:
-      len = lua_objlen(lua, i);
-      for(int j = 1; j <= len; j++){
-        lua_rawgeti(lua, i, j);
-        switch(lua_type(lua, -1)){
-        case LUA_TNUMBER:
-        case LUA_TSTRING:
-          aptr = lua_tolstring(lua, -1, &asiz);
-          tclistpush(args, aptr, asiz);
-          break;
+      case LUA_TNUMBER:
+      case LUA_TSTRING:
+        aptr = lua_tolstring(lua, i, &asiz);
+        tclistpush(args, aptr, asiz);
+        break;
+      case LUA_TTABLE:
+        len = lua_objlen(lua, i);
+        for(int j = 1; j <= len; j++){
+          lua_rawgeti(lua, i, j);
+          switch(lua_type(lua, -1)){
+            case LUA_TNUMBER:
+            case LUA_TSTRING:
+              aptr = lua_tolstring(lua, -1, &asiz);
+              tclistpush(args, aptr, asiz);
+              break;
+          }
+          lua_pop(lua, 1);
         }
-        lua_pop(lua, 1);
-      }
-      break;
+        break;
     }
   }
   lua_getglobal(lua, SERVVAR);
@@ -961,27 +963,27 @@ static int serv_mapreduce(lua_State *lua){
     size_t ksiz;
     int len;
     switch(lua_type(lua, 3)){
-    case LUA_TNUMBER:
-    case LUA_TSTRING:
-      keys = tclistnew2(1);
-      kbuf = lua_tolstring(lua, 3, &ksiz);
-      tclistpush(keys, kbuf, ksiz);
-      break;
-    case LUA_TTABLE:
-      len = lua_objlen(lua, 3);
-      keys = tclistnew2(len);
-      for(int i = 1; i <= len; i++){
-        lua_rawgeti(lua, 3, i);
-        switch(lua_type(lua, -1)){
-        case LUA_TNUMBER:
-        case LUA_TSTRING:
-          kbuf = lua_tolstring(lua, -1, &ksiz);
-          tclistpush(keys, kbuf, ksiz);
-          break;
+      case LUA_TNUMBER:
+      case LUA_TSTRING:
+        keys = tclistnew2(1);
+        kbuf = lua_tolstring(lua, 3, &ksiz);
+        tclistpush(keys, kbuf, ksiz);
+        break;
+      case LUA_TTABLE:
+        len = lua_objlen(lua, 3);
+        keys = tclistnew2(len);
+        for(int i = 1; i <= len; i++){
+          lua_rawgeti(lua, 3, i);
+          switch(lua_type(lua, -1)){
+            case LUA_TNUMBER:
+            case LUA_TSTRING:
+              kbuf = lua_tolstring(lua, -1, &ksiz);
+              tclistpush(keys, kbuf, ksiz);
+              break;
+          }
+          lua_pop(lua, 1);
         }
-        lua_pop(lua, 1);
-      }
-      break;
+        break;
     }
   }
   lua_getglobal(lua, SERVVAR);
@@ -1303,22 +1305,22 @@ static int serv_pack(lua_State *lua){
   for(int i = 2; i <= argc; i++){
     int len;
     switch(lua_type(lua, i)){
-    case LUA_TNUMBER:
-    case LUA_TSTRING:
-      lua_pushvalue(lua, i);
-      lua_rawseti(lua, aidx, eidx++);
-      break;
-    case LUA_TTABLE:
-      len = lua_objlen(lua, i);
-      for(int j = 1; j <= len; j++){
-        lua_rawgeti(lua, i, j);
+      case LUA_TNUMBER:
+      case LUA_TSTRING:
+        lua_pushvalue(lua, i);
         lua_rawseti(lua, aidx, eidx++);
-      }
-      break;
-    default:
-      lua_pushnumber(lua, 0);
-      lua_rawseti(lua, aidx, eidx++);
-      break;
+        break;
+      case LUA_TTABLE:
+        len = lua_objlen(lua, i);
+        for(int j = 1; j <= len; j++){
+          lua_rawgeti(lua, i, j);
+          lua_rawseti(lua, aidx, eidx++);
+        }
+        break;
+      default:
+        lua_pushnumber(lua, 0);
+        lua_rawseti(lua, aidx, eidx++);
+        break;
     }
   }
   lua_replace(lua, 2);
@@ -1356,112 +1358,112 @@ static int serv_pack(lua_State *lua){
       uint64_t wnum;
       char wbuf[TTNUMBUFSIZ], *wp;
       switch(c){
-      case 'c':
-      case 'C':
-        cnum = num;
-        tcxstrcat(xstr, &cnum, sizeof(cnum));
-        break;
-      case 's':
-      case 'S':
-        snum = num;
-        tcxstrcat(xstr, &snum, sizeof(snum));
-        break;
-      case 'i':
-      case 'I':
-        inum = num;
-        tcxstrcat(xstr, &inum, sizeof(inum));
-        break;
-      case 'l':
-      case 'L':
-        lnum = num;
-        tcxstrcat(xstr, &lnum, sizeof(lnum));
-        break;
-      case 'f':
-      case 'F':
-        fnum = num;
-        tcxstrcat(xstr, &fnum, sizeof(fnum));
-        break;
-      case 'd':
-      case 'D':
-        dnum = num;
-        tcxstrcat(xstr, &dnum, sizeof(dnum));
-        break;
-      case 'n':
-        snum = num;
-        snum = TTHTONS(snum);
-        tcxstrcat(xstr, &snum, sizeof(snum));
-        break;
-      case 'N':
-        inum = num;
-        inum = TTHTONL(inum);
-        tcxstrcat(xstr, &inum, sizeof(inum));
-        break;
-      case 'M':
-        lnum = num;
-        lnum = TTHTONLL(lnum);
-        tcxstrcat(xstr, &lnum, sizeof(lnum));
-        break;
-      case 'w':
-      case 'W':
-        wnum = num;
-        wp = wbuf;
-        if(wnum < (1ULL << 7)){
-          *(wp++) = wnum;
-        } else if(wnum < (1ULL << 14)){
-          *(wp++) = (wnum >> 7) | 0x80;
-          *(wp++) = wnum & 0x7f;
-        } else if(wnum < (1ULL << 21)){
-          *(wp++) = (wnum >> 14) | 0x80;
-          *(wp++) = ((wnum >> 7) & 0x7f) | 0x80;
-          *(wp++) = wnum & 0x7f;
-        } else if(wnum < (1ULL << 28)){
-          *(wp++) = (wnum >> 21) | 0x80;
-          *(wp++) = ((wnum >> 14) & 0x7f) | 0x80;
-          *(wp++) = ((wnum >> 7) & 0x7f) | 0x80;
-          *(wp++) = wnum & 0x7f;
-        } else if(wnum < (1ULL << 35)){
-          *(wp++) = (wnum >> 28) | 0x80;
-          *(wp++) = ((wnum >> 21) & 0x7f) | 0x80;
-          *(wp++) = ((wnum >> 14) & 0x7f) | 0x80;
-          *(wp++) = ((wnum >> 7) & 0x7f) | 0x80;
-          *(wp++) = wnum & 0x7f;
-        } else if(wnum < (1ULL << 42)){
-          *(wp++) = (wnum >> 35) | 0x80;
-          *(wp++) = ((wnum >> 28) & 0x7f) | 0x80;
-          *(wp++) = ((wnum >> 21) & 0x7f) | 0x80;
-          *(wp++) = ((wnum >> 14) & 0x7f) | 0x80;
-          *(wp++) = ((wnum >> 7) & 0x7f) | 0x80;
-          *(wp++) = wnum & 0x7f;
-        } else if(wnum < (1ULL << 49)){
-          *(wp++) = (wnum >> 42) | 0x80;
-          *(wp++) = ((wnum >> 35) & 0x7f) | 0x80;
-          *(wp++) = ((wnum >> 28) & 0x7f) | 0x80;
-          *(wp++) = ((wnum >> 21) & 0x7f) | 0x80;
-          *(wp++) = ((wnum >> 14) & 0x7f) | 0x80;
-          *(wp++) = ((wnum >> 7) & 0x7f) | 0x80;
-          *(wp++) = wnum & 0x7f;
-        } else if(wnum < (1ULL << 56)){
-          *(wp++) = (wnum >> 49) | 0x80;
-          *(wp++) = ((wnum >> 42) & 0x7f) | 0x80;
-          *(wp++) = ((wnum >> 35) & 0x7f) | 0x80;
-          *(wp++) = ((wnum >> 28) & 0x7f) | 0x80;
-          *(wp++) = ((wnum >> 21) & 0x7f) | 0x80;
-          *(wp++) = ((wnum >> 14) & 0x7f) | 0x80;
-          *(wp++) = ((wnum >> 7) & 0x7f) | 0x80;
-          *(wp++) = wnum & 0x7f;
-        } else {
-          *(wp++) = (wnum >> 63) | 0x80;
-          *(wp++) = ((wnum >> 49) & 0x7f) | 0x80;
-          *(wp++) = ((wnum >> 42) & 0x7f) | 0x80;
-          *(wp++) = ((wnum >> 35) & 0x7f) | 0x80;
-          *(wp++) = ((wnum >> 28) & 0x7f) | 0x80;
-          *(wp++) = ((wnum >> 21) & 0x7f) | 0x80;
-          *(wp++) = ((wnum >> 14) & 0x7f) | 0x80;
-          *(wp++) = ((wnum >> 7) & 0x7f) | 0x80;
-          *(wp++) = wnum & 0x7f;
-        }
-        tcxstrcat(xstr, wbuf, wp - wbuf);
-        break;
+        case 'c':
+        case 'C':
+          cnum = num;
+          tcxstrcat(xstr, &cnum, sizeof(cnum));
+          break;
+        case 's':
+        case 'S':
+          snum = num;
+          tcxstrcat(xstr, &snum, sizeof(snum));
+          break;
+        case 'i':
+        case 'I':
+          inum = num;
+          tcxstrcat(xstr, &inum, sizeof(inum));
+          break;
+        case 'l':
+        case 'L':
+          lnum = num;
+          tcxstrcat(xstr, &lnum, sizeof(lnum));
+          break;
+        case 'f':
+        case 'F':
+          fnum = num;
+          tcxstrcat(xstr, &fnum, sizeof(fnum));
+          break;
+        case 'd':
+        case 'D':
+          dnum = num;
+          tcxstrcat(xstr, &dnum, sizeof(dnum));
+          break;
+        case 'n':
+          snum = num;
+          snum = TTHTONS(snum);
+          tcxstrcat(xstr, &snum, sizeof(snum));
+          break;
+        case 'N':
+          inum = num;
+          inum = TTHTONL(inum);
+          tcxstrcat(xstr, &inum, sizeof(inum));
+          break;
+        case 'M':
+          lnum = num;
+          lnum = TTHTONLL(lnum);
+          tcxstrcat(xstr, &lnum, sizeof(lnum));
+          break;
+        case 'w':
+        case 'W':
+          wnum = num;
+          wp = wbuf;
+          if(wnum < (1ULL << 7)){
+            *(wp++) = wnum;
+          } else if(wnum < (1ULL << 14)){
+            *(wp++) = (wnum >> 7) | 0x80;
+            *(wp++) = wnum & 0x7f;
+          } else if(wnum < (1ULL << 21)){
+            *(wp++) = (wnum >> 14) | 0x80;
+            *(wp++) = ((wnum >> 7) & 0x7f) | 0x80;
+            *(wp++) = wnum & 0x7f;
+          } else if(wnum < (1ULL << 28)){
+            *(wp++) = (wnum >> 21) | 0x80;
+            *(wp++) = ((wnum >> 14) & 0x7f) | 0x80;
+            *(wp++) = ((wnum >> 7) & 0x7f) | 0x80;
+            *(wp++) = wnum & 0x7f;
+          } else if(wnum < (1ULL << 35)){
+            *(wp++) = (wnum >> 28) | 0x80;
+            *(wp++) = ((wnum >> 21) & 0x7f) | 0x80;
+            *(wp++) = ((wnum >> 14) & 0x7f) | 0x80;
+            *(wp++) = ((wnum >> 7) & 0x7f) | 0x80;
+            *(wp++) = wnum & 0x7f;
+          } else if(wnum < (1ULL << 42)){
+            *(wp++) = (wnum >> 35) | 0x80;
+            *(wp++) = ((wnum >> 28) & 0x7f) | 0x80;
+            *(wp++) = ((wnum >> 21) & 0x7f) | 0x80;
+            *(wp++) = ((wnum >> 14) & 0x7f) | 0x80;
+            *(wp++) = ((wnum >> 7) & 0x7f) | 0x80;
+            *(wp++) = wnum & 0x7f;
+          } else if(wnum < (1ULL << 49)){
+            *(wp++) = (wnum >> 42) | 0x80;
+            *(wp++) = ((wnum >> 35) & 0x7f) | 0x80;
+            *(wp++) = ((wnum >> 28) & 0x7f) | 0x80;
+            *(wp++) = ((wnum >> 21) & 0x7f) | 0x80;
+            *(wp++) = ((wnum >> 14) & 0x7f) | 0x80;
+            *(wp++) = ((wnum >> 7) & 0x7f) | 0x80;
+            *(wp++) = wnum & 0x7f;
+          } else if(wnum < (1ULL << 56)){
+            *(wp++) = (wnum >> 49) | 0x80;
+            *(wp++) = ((wnum >> 42) & 0x7f) | 0x80;
+            *(wp++) = ((wnum >> 35) & 0x7f) | 0x80;
+            *(wp++) = ((wnum >> 28) & 0x7f) | 0x80;
+            *(wp++) = ((wnum >> 21) & 0x7f) | 0x80;
+            *(wp++) = ((wnum >> 14) & 0x7f) | 0x80;
+            *(wp++) = ((wnum >> 7) & 0x7f) | 0x80;
+            *(wp++) = wnum & 0x7f;
+          } else {
+            *(wp++) = (wnum >> 63) | 0x80;
+            *(wp++) = ((wnum >> 49) & 0x7f) | 0x80;
+            *(wp++) = ((wnum >> 42) & 0x7f) | 0x80;
+            *(wp++) = ((wnum >> 35) & 0x7f) | 0x80;
+            *(wp++) = ((wnum >> 28) & 0x7f) | 0x80;
+            *(wp++) = ((wnum >> 21) & 0x7f) | 0x80;
+            *(wp++) = ((wnum >> 14) & 0x7f) | 0x80;
+            *(wp++) = ((wnum >> 7) & 0x7f) | 0x80;
+            *(wp++) = wnum & 0x7f;
+          }
+          tcxstrcat(xstr, wbuf, wp - wbuf);
+          break;
       }
       eidx++;
     }
@@ -1521,166 +1523,166 @@ static int serv_unpack(lua_State *lua){
       double dnum;
       uint64_t wnum;
       switch(c){
-      case 'c':
-        if(size >= sizeof(cnum)){
-          memcpy(&cnum, rp, sizeof(cnum));
-          lua_pushnumber(lua, (int8_t)cnum);
+        case 'c':
+          if(size >= sizeof(cnum)){
+            memcpy(&cnum, rp, sizeof(cnum));
+            lua_pushnumber(lua, (int8_t)cnum);
+            lua_rawseti(lua, 3, eidx++);
+            rp += sizeof(cnum);
+            size -= sizeof(cnum);
+          } else {
+            size = 0;
+          }
+          break;
+        case 'C':
+          if(size >= sizeof(cnum)){
+            memcpy(&cnum, rp, sizeof(cnum));
+            lua_pushnumber(lua, (uint8_t)cnum);
+            lua_rawseti(lua, 3, eidx++);
+            rp += sizeof(cnum);
+            size -= sizeof(cnum);
+          } else {
+            size = 0;
+          }
+          break;
+        case 's':
+          if(size >= sizeof(snum)){
+            memcpy(&snum, rp, sizeof(snum));
+            lua_pushnumber(lua, (int16_t)snum);
+            lua_rawseti(lua, 3, eidx++);
+            rp += sizeof(snum);
+            size -= sizeof(snum);
+          } else {
+            size = 0;
+          }
+          break;
+        case 'S':
+          if(size >= sizeof(snum)){
+            memcpy(&snum, rp, sizeof(snum));
+            lua_pushnumber(lua, (uint16_t)snum);
+            lua_rawseti(lua, 3, eidx++);
+            rp += sizeof(snum);
+            size -= sizeof(snum);
+          } else {
+            size = 0;
+          }
+          break;
+        case 'i':
+          if(size >= sizeof(inum)){
+            memcpy(&inum, rp, sizeof(inum));
+            lua_pushnumber(lua, (int32_t)inum);
+            lua_rawseti(lua, 3, eidx++);
+            rp += sizeof(inum);
+            size -= sizeof(inum);
+          } else {
+            size = 0;
+          }
+          break;
+        case 'I':
+          if(size >= sizeof(inum)){
+            memcpy(&inum, rp, sizeof(inum));
+            lua_pushnumber(lua, (uint32_t)inum);
+            lua_rawseti(lua, 3, eidx++);
+            rp += sizeof(inum);
+            size -= sizeof(inum);
+          } else {
+            size = 0;
+          }
+          break;
+        case 'l':
+          if(size >= sizeof(lnum)){
+            memcpy(&lnum, rp, sizeof(lnum));
+            lua_pushnumber(lua, (int64_t)lnum);
+            lua_rawseti(lua, 3, eidx++);
+            rp += sizeof(lnum);
+            size -= sizeof(lnum);
+          } else {
+            size = 0;
+          }
+          break;
+        case 'L':
+          if(size >= sizeof(lnum)){
+            memcpy(&lnum, rp, sizeof(lnum));
+            lua_pushnumber(lua, (uint64_t)lnum);
+            lua_rawseti(lua, 3, eidx++);
+            rp += sizeof(lnum);
+            size -= sizeof(lnum);
+          } else {
+            size = 0;
+          }
+          break;
+        case 'f':
+        case 'F':
+          if(size >= sizeof(fnum)){
+            memcpy(&fnum, rp, sizeof(fnum));
+            lua_pushnumber(lua, (float)fnum);
+            lua_rawseti(lua, 3, eidx++);
+            rp += sizeof(fnum);
+            size -= sizeof(fnum);
+          } else {
+            size = 0;
+          }
+          break;
+        case 'd':
+        case 'D':
+          if(size >= sizeof(dnum)){
+            memcpy(&dnum, rp, sizeof(dnum));
+            lua_pushnumber(lua, (double)dnum);
+            lua_rawseti(lua, 3, eidx++);
+            rp += sizeof(dnum);
+            size -= sizeof(dnum);
+          } else {
+            size = 0;
+          }
+          break;
+        case 'n':
+          if(size >= sizeof(snum)){
+            memcpy(&snum, rp, sizeof(snum));
+            snum = TTNTOHS(snum);
+            lua_pushnumber(lua, (uint16_t)snum);
+            lua_rawseti(lua, 3, eidx++);
+            rp += sizeof(snum);
+            size -= sizeof(snum);
+          } else {
+            size = 0;
+          }
+          break;
+        case 'N':
+          if(size >= sizeof(inum)){
+            memcpy(&inum, rp, sizeof(inum));
+            inum = TTNTOHL(inum);
+            lua_pushnumber(lua, (uint32_t)inum);
+            lua_rawseti(lua, 3, eidx++);
+            rp += sizeof(inum);
+            size -= sizeof(inum);
+          } else {
+            size = 0;
+          }
+          break;
+        case 'M':
+          if(size >= sizeof(lnum)){
+            memcpy(&lnum, rp, sizeof(lnum));
+            lnum = TTNTOHLL(lnum);
+            lua_pushnumber(lua, (uint64_t)lnum);
+            lua_rawseti(lua, 3, eidx++);
+            rp += sizeof(lnum);
+            size -= sizeof(lnum);
+          } else {
+            size = 0;
+          }
+          break;
+        case 'w':
+        case 'W':
+          wnum = 0;
+          do {
+            inum = *(unsigned char *)rp;
+            wnum = wnum * 0x80 + (inum & 0x7f);
+            rp++;
+            size--;
+          } while(inum >= 0x80 && size > 0);
+          lua_pushnumber(lua, wnum);
           lua_rawseti(lua, 3, eidx++);
-          rp += sizeof(cnum);
-          size -= sizeof(cnum);
-        } else {
-          size = 0;
-        }
-        break;
-      case 'C':
-        if(size >= sizeof(cnum)){
-          memcpy(&cnum, rp, sizeof(cnum));
-          lua_pushnumber(lua, (uint8_t)cnum);
-          lua_rawseti(lua, 3, eidx++);
-          rp += sizeof(cnum);
-          size -= sizeof(cnum);
-        } else {
-          size = 0;
-        }
-        break;
-      case 's':
-        if(size >= sizeof(snum)){
-          memcpy(&snum, rp, sizeof(snum));
-          lua_pushnumber(lua, (int16_t)snum);
-          lua_rawseti(lua, 3, eidx++);
-          rp += sizeof(snum);
-          size -= sizeof(snum);
-        } else {
-          size = 0;
-        }
-        break;
-      case 'S':
-        if(size >= sizeof(snum)){
-          memcpy(&snum, rp, sizeof(snum));
-          lua_pushnumber(lua, (uint16_t)snum);
-          lua_rawseti(lua, 3, eidx++);
-          rp += sizeof(snum);
-          size -= sizeof(snum);
-        } else {
-          size = 0;
-        }
-        break;
-      case 'i':
-        if(size >= sizeof(inum)){
-          memcpy(&inum, rp, sizeof(inum));
-          lua_pushnumber(lua, (int32_t)inum);
-          lua_rawseti(lua, 3, eidx++);
-          rp += sizeof(inum);
-          size -= sizeof(inum);
-        } else {
-          size = 0;
-        }
-        break;
-      case 'I':
-        if(size >= sizeof(inum)){
-          memcpy(&inum, rp, sizeof(inum));
-          lua_pushnumber(lua, (uint32_t)inum);
-          lua_rawseti(lua, 3, eidx++);
-          rp += sizeof(inum);
-          size -= sizeof(inum);
-        } else {
-          size = 0;
-        }
-        break;
-      case 'l':
-        if(size >= sizeof(lnum)){
-          memcpy(&lnum, rp, sizeof(lnum));
-          lua_pushnumber(lua, (int64_t)lnum);
-          lua_rawseti(lua, 3, eidx++);
-          rp += sizeof(lnum);
-          size -= sizeof(lnum);
-        } else {
-          size = 0;
-        }
-        break;
-      case 'L':
-        if(size >= sizeof(lnum)){
-          memcpy(&lnum, rp, sizeof(lnum));
-          lua_pushnumber(lua, (uint64_t)lnum);
-          lua_rawseti(lua, 3, eidx++);
-          rp += sizeof(lnum);
-          size -= sizeof(lnum);
-        } else {
-          size = 0;
-        }
-        break;
-      case 'f':
-      case 'F':
-        if(size >= sizeof(fnum)){
-          memcpy(&fnum, rp, sizeof(fnum));
-          lua_pushnumber(lua, (float)fnum);
-          lua_rawseti(lua, 3, eidx++);
-          rp += sizeof(fnum);
-          size -= sizeof(fnum);
-        } else {
-          size = 0;
-        }
-        break;
-      case 'd':
-      case 'D':
-        if(size >= sizeof(dnum)){
-          memcpy(&dnum, rp, sizeof(dnum));
-          lua_pushnumber(lua, (double)dnum);
-          lua_rawseti(lua, 3, eidx++);
-          rp += sizeof(dnum);
-          size -= sizeof(dnum);
-        } else {
-          size = 0;
-        }
-        break;
-      case 'n':
-        if(size >= sizeof(snum)){
-          memcpy(&snum, rp, sizeof(snum));
-          snum = TTNTOHS(snum);
-          lua_pushnumber(lua, (uint16_t)snum);
-          lua_rawseti(lua, 3, eidx++);
-          rp += sizeof(snum);
-          size -= sizeof(snum);
-        } else {
-          size = 0;
-        }
-        break;
-      case 'N':
-        if(size >= sizeof(inum)){
-          memcpy(&inum, rp, sizeof(inum));
-          inum = TTNTOHL(inum);
-          lua_pushnumber(lua, (uint32_t)inum);
-          lua_rawseti(lua, 3, eidx++);
-          rp += sizeof(inum);
-          size -= sizeof(inum);
-        } else {
-          size = 0;
-        }
-        break;
-      case 'M':
-        if(size >= sizeof(lnum)){
-          memcpy(&lnum, rp, sizeof(lnum));
-          lnum = TTNTOHLL(lnum);
-          lua_pushnumber(lua, (uint64_t)lnum);
-          lua_rawseti(lua, 3, eidx++);
-          rp += sizeof(lnum);
-          size -= sizeof(lnum);
-        } else {
-          size = 0;
-        }
-        break;
-      case 'w':
-      case 'W':
-        wnum = 0;
-        do {
-          inum = *(unsigned char *)rp;
-          wnum = wnum * 0x80 + (inum & 0x7f);
-          rp++;
-          size--;
-        } while(inum >= 0x80 && size > 0);
-        lua_pushnumber(lua, wnum);
-        lua_rawseti(lua, 3, eidx++);
-        break;
+          break;
       }
     }
     format++;
@@ -1892,6 +1894,51 @@ static int serv_bit(lua_State *lua){
   }
   lua_settop(lua, 0);
   lua_pushnumber(lua, num);
+  return 1;
+}
+
+
+/* for _strstr function */
+static int serv_strstr(lua_State *lua){
+  int argc = lua_gettop(lua);
+  if(argc < 2){
+    lua_pushstring(lua, "_strstr: invalid arguments");
+    lua_error(lua);
+  }
+  const char *str = lua_tostring(lua, 1);
+  const char *pat = lua_tostring(lua, 2);
+  if(!str || !pat){
+    lua_pushstring(lua, "_strstr: invalid arguments");
+    lua_error(lua);
+  }
+  const char *alt = argc > 2 ? lua_tostring(lua, 3) : NULL;
+  if(alt){
+    TCXSTR *xstr = tcxstrnew();
+    int plen = strlen(pat);
+    int alen = strlen(alt);
+    if(plen > 0){
+      char *pv;
+      while((pv = strstr(str, pat)) != NULL){
+        tcxstrcat(xstr, str, pv - str);
+        tcxstrcat(xstr, alt, alen);
+        str = pv + plen;
+      }
+    }
+    tcxstrcat2(xstr, str);
+    lua_settop(lua, 0);
+    lua_pushstring(lua, tcxstrptr(xstr));
+    tcxstrdel(xstr);
+  } else {
+    char *pv = strstr(str, pat);
+    if(pv){
+      int idx = pv - str + 1;
+      lua_settop(lua, 0);
+      lua_pushinteger(lua, idx);
+    } else {
+      lua_settop(lua, 0);
+      lua_pushinteger(lua, 0);
+    }
+  }
   return 1;
 }
 

@@ -6,7 +6,7 @@
 
 -- echo back the key and the value
 function echo(key, value)
-   return key .. "\t" .. value
+   return key .. "\t" .. value .. "\n"
 end
 
 
@@ -365,6 +365,12 @@ function bitand(key, value)
       return nil
    end
    return _bit("and", key, value)
+end
+
+
+-- check substring matching
+function strstr(key, value)
+   return tostring(_strstr(key, value))
 end
 
 

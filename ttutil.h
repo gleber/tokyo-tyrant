@@ -92,7 +92,7 @@ int ttopensockunix(const char *path);
    `addr' specifies the address of the server.  If it is `NULL', every network address is binded.
    `port' specifies the port number of the server.
    The return value is the file descriptor of the stream, or -1 on error. */
-int ttopenservsock(const char *addr, int port);
+int ttopenservsock(const char *addr, int port, int backlog);
 
 
 /* Open a server socket of UNIX domain stream to clients.
@@ -320,6 +320,7 @@ typedef struct _TTSERV {                 /* type of structure for a server */
   char host[TTADDRBUFSIZ];               /* host name */
   char addr[TTADDRBUFSIZ];               /* host address */
   uint16_t port;                         /* port number */
+  uint32_t backlog;
   TCLIST *queue;                         /* queue of requests */
   pthread_mutex_t qmtx;                  /* mutex for the queue */
   pthread_cond_t qcnd;                   /* condition variable for the queue */
@@ -363,7 +364,7 @@ void ttservdel(TTSERV *serv);
    `port' specifies the port number.  If it is not less than 0, UNIX domain socket is binded and
    the host name is treated as the path of the socket file.
    If successful, the return value is true, else, it is false. */
-bool ttservconf(TTSERV *serv, const char *host, int port);
+bool ttservconf(TTSERV *serv, const char *host, int port, int backlog);
 
 
 /* Set tuning parameters of a server object.

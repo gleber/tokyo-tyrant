@@ -146,7 +146,7 @@ static int proc(const char *dbname, const char *host, int port, int thnum, int t
                 const char *ulogpath, uint64_t ulim, bool uas, uint32_t sid,
                 const char *mhost, int mport, const char *rtspath, int ropts,
                 const char *skelpath, int mulnum, const char *extpath, const TCLIST *extpcs,
-                uint64_t mask);
+                uint64_t mask, uint32_t backlog);
 static void do_log(int level, const char *msg, void *opq);
 static void do_slave(void *opq);
 static void do_extpc(void *opq);
@@ -225,6 +225,7 @@ int main(int argc, char **argv){
   bool uas = false;
   uint32_t sid = 0;
   int mport = TTDEFPORT;
+  int backlog = SOMAXCONN;
   int ropts = 0;
   int mulnum = 0;
   uint64_t mask = 0;
@@ -236,6 +237,9 @@ int main(int argc, char **argv){
       } else if(!strcmp(argv[i], "-port")){
         if(++i >= argc) usage();
         port = tcatoi(argv[i]);
+      } else if(!strcmp(argv[i], "-backlog")){
+        if(++i >= argc) usage();
+        backlog = tcatoi(argv[i]);
       } else if(!strcmp(argv[i], "-thnum")){
         if(++i >= argc) usage();
         thnum = tcatoi(argv[i]);
@@ -320,7 +324,7 @@ int main(int argc, char **argv){
   g_serv = ttservnew();
   int rv = proc(dbname, host, port, thnum, tout, dmn, pidpath, kl, logpath,
                 ulogpath, ulim, uas, sid, mhost, mport, rtspath, ropts,
-                skelpath, mulnum, extpath, extpcs, mask);
+                skelpath, mulnum, extpath, extpcs, mask, backlog);
   ttservdel(g_serv);
   if(extpcs) tclistdel(extpcs);
   return rv;
@@ -444,7 +448,7 @@ static int proc(const char *dbname, const char *host, int port, int thnum, int t
                 const char *ulogpath, uint64_t ulim, bool uas, uint32_t sid,
                 const char *mhost, int mport, const char *rtspath, int ropts,
                 const char *skelpath, int mulnum, const char *extpath, const TCLIST *extpcs,
-                uint64_t mask){
+                uint64_t mask, uint32_t backlog){
   LOGARG larg;
   larg.fd = 1;
   ttservsetloghandler(g_serv, do_log, &larg);
@@ -554,7 +558,7 @@ static int proc(const char *dbname, const char *host, int port, int thnum, int t
   }
   ttservlog(g_serv, TTLOGSYSTEM, "server configuration: host=%s port=%d",
             host ? host : "(any)", port);
-  if(!ttservconf(g_serv, host, port)) return 1;
+  if(!ttservconf(g_serv, host, port, backlog)) return 1;
   struct rlimit rlbuf;
   memset(&rlbuf, 0, sizeof(rlbuf));
   if(getrlimit(RLIMIT_NOFILE, &rlbuf) == 0 && rlbuf.rlim_cur != RLIM_INFINITY){

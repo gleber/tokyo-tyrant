@@ -156,7 +156,7 @@ int ttopensockunix(const char *path){
 
 
 /* Open a server socket of TCP/IP stream to clients. */
-int ttopenservsock(const char *addr, int port){
+int ttopenservsock(const char *addr, int port, int backlog){
   assert(port >= 0);
   struct sockaddr_in sain;
   memset(&sain, 0, sizeof(sain));
@@ -172,7 +172,7 @@ int ttopenservsock(const char *addr, int port){
     return -1;
   }
   if(bind(fd, (struct sockaddr *)&sain, sizeof(sain)) != 0 ||
-     listen(fd, SOMAXCONN) != 0){
+     listen(fd, backlog) != 0){
     close(fd);
     return -1;
   }
@@ -893,7 +893,7 @@ void ttservdel(TTSERV *serv){
 
 
 /* Configure a server object. */
-bool ttservconf(TTSERV *serv, const char *host, int port){
+bool ttservconf(TTSERV *serv, const char *host, int port, int backlog){
   assert(serv);
   bool err = false;
   if(port < 1){
@@ -911,6 +911,7 @@ bool ttservconf(TTSERV *serv, const char *host, int port){
   }
   snprintf(serv->host, sizeof(serv->host), "%s", host ? host : "");
   serv->port = port;
+  serv->backlog = backlog;
   return !err;
 }
 
@@ -970,7 +971,7 @@ bool ttservstart(TTSERV *serv){
       return false;
     }
   } else {
-    lfd = ttopenservsock(serv->addr[0] != '\0' ? serv->addr : NULL, serv->port);
+      lfd = ttopenservsock(serv->addr[0] != '\0' ? serv->addr : NULL, serv->port, serv->backlog);
     if(lfd == -1){
       ttservlog(serv, TTLOGERROR, "ttopenservsock failed");
       return false;
@@ -1064,7 +1065,7 @@ bool ttservstart(TTSERV *serv){
               lfd = ttopenservsockunix(serv->host);
               if(lfd == -1) ttservlog(serv, TTLOGERROR, "ttopenservsockunix failed");
             } else {
-              lfd = ttopenservsock(serv->addr[0] != '\0' ? serv->addr : NULL, serv->port);
+              lfd = ttopenservsock(serv->addr[0] != '\0' ? serv->addr : NULL, serv->port, serv->backlog);
               if(lfd == -1) ttservlog(serv, TTLOGERROR, "ttopenservsock failed");
             }
             if(lfd >= 0){

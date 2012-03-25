@@ -1,0 +1,14 @@
+*.o
+*.so
+*.so.*
+/Makefile
+/config.log
+/config.status
+/libtokyotyrant.a
+/tcrmgr
+/tcrmttest
+/tcrtest
+/tokyotyrant.pc
+/ttserver
+/ttulmgr
+/ttultest

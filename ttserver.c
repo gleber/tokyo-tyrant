@@ -336,7 +336,7 @@ static void usage(void){
   fprintf(stderr, "%s: the server of Tokyo Tyrant\n", g_progname);
   fprintf(stderr, "\n");
   fprintf(stderr, "usage:\n");
-  fprintf(stderr, "  %s [-host name] [-port num] [-thnum num] [-tout num]"
+  fprintf(stderr, "  %s [-host name] [-port num] [-backlog num] [-thnum num] [-tout num]"
           " [-dmn] [-pid path] [-kl] [-log path] [-ld|-le] [-ulog path] [-ulim num] [-uas]"
           " [-sid num] [-mhost name] [-mport num] [-rts path] [-rcc] [-skel name] [-mul num]"
           " [-ext path] [-extpc name period] [-mask expr] [-unmask expr] [dbname]\n",
